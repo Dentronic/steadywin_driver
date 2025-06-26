@@ -1509,6 +1509,274 @@ class SteadyWinRS485:
             self.logger.error("✗ Failed to execute velocity control command")
             return None
 
+    def absolute_position_control(self, target_position_counts):
+        """
+        Absolute position control (Command 0x22)
+        
+        This command sets the target absolute position for the motor.
+        The motor will move to the specified absolute position.
+        The response contains the same real-time information as read_realtime_info().
+        
+        Args:
+            target_position_counts (int): Target absolute position in counts
+                                        Unit: Count (rotation = value/16384 Count)
+                                        Positive/negative values supported
+        
+        Returns:
+            dict: Response data containing real-time info, or None on error
+        """
+        # Validate inputs
+        if not isinstance(target_position_counts, int):
+            self.logger.error("Target position must be an integer (counts)")
+            return None
+        
+        # Build 4-byte payload
+        try:
+            payload = bytearray(4)
+            
+            # Absolute position (4 bytes signed) - unit: Count
+            payload[0:4] = struct.pack('<i', target_position_counts)
+            
+        except Exception as e:
+            self.logger.error(f"Error building absolute position control payload: {e}")
+            return None
+        
+        # Convert counts to degrees for logging
+        target_degrees = target_position_counts * 360.0 / 16384
+        
+        self.logger.info(f"Setting absolute position: {target_position_counts} counts ({target_degrees:.2f}°)")
+        
+        response = self.send_command(0x22, bytes(payload), expect_response=True)
+        
+        if response:
+            self.logger.info("✓ Absolute position control command executed successfully")
+            
+            # Parse the response using the same logic as read_realtime_info
+            parsed_data = self._parse_realtime_data(response['payload'])
+            if parsed_data:
+                # Return both raw response and parsed data
+                response['parsed_data'] = parsed_data
+                return response
+            else:
+                self.logger.error("✗ Failed to parse absolute position control response")
+                return response  # Return raw response even if parsing fails
+        else:
+            self.logger.error("✗ Failed to execute absolute position control command")
+            return None
+
+    def relative_position_control(self, relative_position_counts):
+        """
+        Relative position control (Command 0x23)
+        
+        This command moves the motor by a relative amount from the current position.
+        The motor will move by the specified relative distance.
+        The response contains the same real-time information as read_realtime_info().
+        
+        Args:
+            relative_position_counts (int): Relative position change in counts
+                                          Unit: Count (rotation = value/16384 Count)
+                                          Positive = forward, negative = backward
+        
+        Returns:
+            dict: Response data containing real-time info, or None on error
+        """
+        # Validate inputs
+        if not isinstance(relative_position_counts, int):
+            self.logger.error("Relative position must be an integer (counts)")
+            return None
+        
+        # Build 4-byte payload
+        try:
+            payload = bytearray(4)
+            
+            # Relative position (4 bytes signed) - unit: Count
+            payload[0:4] = struct.pack('<i', relative_position_counts)
+            
+        except Exception as e:
+            self.logger.error(f"Error building relative position control payload: {e}")
+            return None
+        
+        # Convert counts to degrees for logging
+        relative_degrees = relative_position_counts * 360.0 / 16384
+        
+        self.logger.info(f"Moving relative position: {relative_position_counts} counts ({relative_degrees:.2f}°)")
+        
+        response = self.send_command(0x23, bytes(payload), expect_response=True)
+        
+        if response:
+            self.logger.info("✓ Relative position control command executed successfully")
+            
+            # Parse the response using the same logic as read_realtime_info
+            parsed_data = self._parse_realtime_data(response['payload'])
+            if parsed_data:
+                # Return both raw response and parsed data
+                response['parsed_data'] = parsed_data
+                return response
+            else:
+                self.logger.error("✗ Failed to parse relative position control response")
+                return response  # Return raw response even if parsing fails
+        else:
+            self.logger.error("✗ Failed to execute relative position control command")
+            return None
+
+    def return_home(self):
+        """
+        Return to home position (Command 0x24)
+        
+        This command returns the motor to its home position.
+        No payload is required for this command.
+        The response contains the same real-time information as read_realtime_info().
+        
+        Returns:
+            dict: Response data containing real-time info, or None on error
+        """
+        self.logger.info("Returning motor to home position")
+        
+        response = self.send_command(0x24, b'', expect_response=True)
+        
+        if response:
+            self.logger.info("✓ Return home command executed successfully")
+            
+            # Parse the response using the same logic as read_realtime_info
+            parsed_data = self._parse_realtime_data(response['payload'])
+            if parsed_data:
+                # Return both raw response and parsed data
+                response['parsed_data'] = parsed_data
+                return response
+            else:
+                self.logger.error("✗ Failed to parse return home response")
+                return response  # Return raw response even if parsing fails
+        else:
+            self.logger.error("✗ Failed to execute return home command")
+            return None
+
+    def brake_control(self, operation):
+        """
+        Brake control (Command 0x2E)
+        
+        This command controls the motor brake operation.
+        The response contains the same real-time information as read_realtime_info().
+        
+        Args:
+            operation (int or str): Brake operation
+                                  0 or "off": Switch brake off
+                                  1 or "on": Switch brake on  
+                                  255 or "read": Read brake status
+        
+        Returns:
+            dict: Response data containing real-time info, or None on error
+        """
+        # Convert string operations to integers
+        if isinstance(operation, str):
+            operation_map = {"off": 0, "on": 1, "read": 255}
+            if operation.lower() not in operation_map:
+                self.logger.error("Operation must be 'off', 'on', 'read', or integer 0/1/255")
+                return None
+            operation_code = operation_map[operation.lower()]
+        elif isinstance(operation, int):
+            if operation not in [0, 1, 255]:
+                self.logger.error("Operation must be 0 (off), 1 (on), or 255 (read)")
+                return None
+            operation_code = operation
+        else:
+            self.logger.error("Operation must be integer or string")
+            return None
+        
+        # Build 1-byte payload
+        try:
+            payload = bytearray(1)
+            payload[0] = operation_code
+            
+        except Exception as e:
+            self.logger.error(f"Error building brake control payload: {e}")
+            return None
+        
+        operation_names = {0: "off", 1: "on", 255: "read status"}
+        self.logger.info(f"Brake control: {operation_names.get(operation_code, operation_code)}")
+        
+        response = self.send_command(0x2E, bytes(payload), expect_response=True)
+        
+        if response:
+            self.logger.info("✓ Brake control command executed successfully")
+            
+            # Try to parse the response if it's the expected realtime data format
+            if len(response['payload']) >= 22:
+                parsed_data = self._parse_realtime_data(response['payload'])
+                if parsed_data:
+                    # Return both raw response and parsed data
+                    response['parsed_data'] = parsed_data
+                    return response
+                else:
+                    self.logger.error("✗ Failed to parse brake control response")
+                    return response  # Return raw response even if parsing fails
+            else:
+                # Short response - just return the operation result
+                if len(response['payload']) >= 1:
+                    brake_status = response['payload'][0]
+                    status_names = {0: "off", 1: "on", 255: "status read"}
+                    self.logger.info(f"Brake status: {status_names.get(brake_status, brake_status)}")
+                return response
+        else:
+            self.logger.error("✗ Failed to execute brake control command")
+            return None
+
+    def disable_motor(self):
+        """
+        Disable motor (Command 0x2F)
+        
+        This command disables the motor operation.
+        No payload is required for this command.
+        The response contains the same real-time information as read_realtime_info().
+        
+        Returns:
+            dict: Response data containing real-time info, or None on error
+        """
+        self.logger.info("Disabling motor")
+        
+        response = self.send_command(0x2F, b'', expect_response=True)
+        
+        if response:
+            self.logger.info("✓ Motor disable command executed successfully")
+            
+            # Parse the response using the same logic as read_realtime_info
+            parsed_data = self._parse_realtime_data(response['payload'])
+            if parsed_data:
+                # Return both raw response and parsed data
+                response['parsed_data'] = parsed_data
+                return response
+            else:
+                self.logger.error("✗ Failed to parse motor disable response")
+                return response  # Return raw response even if parsing fails
+        else:
+            self.logger.error("✗ Failed to execute motor disable command")
+            return None
+
+    @staticmethod
+    def counts_to_degrees(counts):
+        """
+        Convert position counts to degrees
+        
+        Args:
+            counts (int): Position in counts
+            
+        Returns:
+            float: Position in degrees
+        """
+        return counts * 360.0 / 16384
+
+    @staticmethod
+    def degrees_to_counts(degrees):
+        """
+        Convert degrees to position counts
+        
+        Args:
+            degrees (float): Position in degrees
+            
+        Returns:
+            int: Position in counts
+        """
+        return int(round(degrees * 16384 / 360.0))
+
 
 def setup_logging(level=logging.INFO):
     """Setup logging configuration"""

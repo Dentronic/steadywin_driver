@@ -1182,13 +1182,18 @@ class SteadyWinRS485Tester:
         print("11. Test Command 0x1E (Calibrate Encoder)")
         print("12. Test Command 0x20 (Q-axis Current Control)")
         print("13. Test Command 0x21 (Velocity Control)")
-        print("14. Test Manual Packet")
-        print("15. Reset Connection")
-        print("16. Enable/Disable Debug Logging")
-        print("17. Test Command 0x1F (Factory Reset)")
-        print("18. Exit")
+        print("14. Test Command 0x22 (Absolute Position Control)")
+        print("15. Test Command 0x23 (Relative Position Control)")
+        print("16. Test Command 0x24 (Return Home)")
+        print("17. Test Command 0x2E (Brake Control)")
+        print("18. Test Command 0x2F (Disable Motor)")
+        print("19. Test Manual Packet")
+        print("20. Reset Connection")
+        print("21. Enable/Disable Debug Logging")
+        print("22. Test Command 0x1F (Factory Reset)")
+        print("23. Exit")
         print()
-        choice = self.get_user_input("Select option (1-18)", int)
+        choice = self.get_user_input("Select option (1-23)", int)
         return choice
     
     def run(self):
@@ -1242,17 +1247,27 @@ class SteadyWinRS485Tester:
                 elif choice == 13:
                     self.test_velocity_control()
                 elif choice == 14:
-                    self.test_manual_packet()
+                    self.test_absolute_position_control()
                 elif choice == 15:
-                    self.reset_connection()
+                    self.test_relative_position_control()
                 elif choice == 16:
-                    self.toggle_debug_logging()
+                    self.test_return_home()
                 elif choice == 17:
-                    self.test_factory_reset()
+                    self.test_brake_control()
                 elif choice == 18:
+                    self.test_disable_motor()
+                elif choice == 19:
+                    self.test_manual_packet()
+                elif choice == 20:
+                    self.reset_connection()
+                elif choice == 21:
+                    self.toggle_debug_logging()
+                elif choice == 22:
+                    self.test_factory_reset()
+                elif choice == 23:
                     break
                 else:
-                    print("Invalid choice. Please select 1-18.")
+                    print("Invalid choice. Please select 1-23.")
                     input("Press Enter to continue...")
         
         except KeyboardInterrupt:
@@ -1971,6 +1986,477 @@ class SteadyWinRS485Tester:
                 
         else:
             print("✗ Failed to execute velocity control command!")
+            print("  Device may not be responding or command not supported")
+        
+        input("\nPress Enter to continue...")
+
+    def test_absolute_position_control(self):
+        """Test Command 0x22 - Absolute Position Control"""
+        if not self.connected:
+            print("✗ Not connected to motor.")
+            input("Press Enter to continue...")
+            return
+        
+        self.print_header()
+        print("=== Test Command 0x22 (Absolute Position Control) ===\n")
+        
+        print("📝 Absolute Position Control Parameters:")
+        print("  • Target Position: Sets the absolute position to move to")
+        print("  • Unit: Count (rotation = value/16384 Count)")
+        print("  • 1 full rotation = 16384 counts = 360°")
+        print("  • Positive/negative values supported")
+        
+        # Read current motor state first
+        print("\n🔍 Reading current motor state...")
+        current_response = self.motor.read_realtime_info()
+        if current_response and 'parsed_data' in current_response:
+            current_data = current_response['parsed_data']
+            current_counts = int(current_data['abs_angle_deg'] * 16384 / 360)
+            print("✓ Current motor state:")
+            print(f"  Current Position: {current_data['abs_angle_deg']:.2f}° ({current_counts} counts)")
+            print(f"  Multi-turn Position: {current_data['multi_angle_deg']:.2f}°")
+            print(f"  Motor Speed: {current_data['speed_rpm']:.2f} RPM")
+            print(f"  Operating Status: {current_data['operating_status']}")
+            print(f"  Motor Status: 0x{current_data['motor_status']:02X}")
+        else:
+            print("⚠ Could not read current motor status")
+            current_counts = 0
+        
+        # Get target position from user
+        print(f"\n📊 Set Absolute Position Control Parameters:")
+        print(f"Input options:")
+        print(f"  1. Enter position in counts (16384 = 1 rotation)")
+        print(f"  2. Enter position in degrees (360° = 1 rotation)")
+        
+        input_mode = self.get_user_input("Select input mode (1=counts, 2=degrees)", int, 1)
+        
+        if input_mode == 1:
+            target_position_counts = self.get_user_input("Enter target absolute position (counts)", int, current_counts)
+            target_degrees = self.motor.counts_to_degrees(target_position_counts)
+        else:
+            target_degrees = self.get_user_input("Enter target absolute position (degrees)", float, 0.0)
+            target_position_counts = self.motor.degrees_to_counts(target_degrees)
+        
+        # Show summary
+        print(f"\n📋 Command Summary:")
+        print(f"  Target Position: {target_position_counts} counts ({target_degrees:.2f}°)")
+        if current_response and 'parsed_data' in current_response:
+            movement = target_position_counts - current_counts
+            movement_degrees = target_degrees - current_data['abs_angle_deg']
+            print(f"  Movement Required: {movement} counts ({movement_degrees:.2f}°)")
+        
+        # Safety confirmation for large movements
+        if abs(target_position_counts) > 65536:  # > 4 rotations
+            print(f"\n⚠ WARNING: Large position requested ({target_degrees/360:.1f} rotations)")
+            print(f"  Ensure motor can safely move to this position!")
+            confirm = input("\nProceed with large movement? (yes/no): ").strip().lower()
+            if confirm != 'yes':
+                print("Command cancelled.")
+                input("\nPress Enter to continue...")
+                return
+        else:
+            confirm = input(f"\nProceed with absolute position control? (y/n): ").strip().lower()
+            if confirm != 'y':
+                print("Command cancelled.")
+                input("\nPress Enter to continue...")
+                return
+        
+        print(f"\n🔧 Sending absolute position control command...")
+        
+        response = self.motor.absolute_position_control(target_position_counts)
+        
+        if response:
+            print("✓ Absolute position control command executed successfully!")
+            
+            if 'parsed_data' in response:
+                motor_data = response['parsed_data']
+                new_counts = int(motor_data['abs_angle_deg'] * 16384 / 360)
+                print(f"\n📊 Updated Motor State:")
+                print(f"  Position: {motor_data['abs_angle_deg']:.2f}° ({new_counts} counts)")
+                print(f"  Multi-turn Position: {motor_data['multi_angle_deg']:.2f}°")
+                print(f"  Motor Speed: {motor_data['speed_rpm']:.2f} RPM")
+                print(f"  Q-axis Current: {motor_data['current_a']:.3f} A")
+                print(f"  Operating Status: {motor_data['operating_status']}")
+                print(f"  Motor Status: 0x{motor_data['motor_status']:02X}")
+                print(f"  Fault Code: 0x{motor_data['fault_code']:02X}")
+                
+                if motor_data['fault_code'] == 0:
+                    print("✓ No faults detected")
+                else:
+                    print("⚠ Fault detected!")
+            
+            print(f"\nCommand Response Details:")
+            print(f"  Packet ID: 0x{response['packet_id']:02X}")
+            print(f"  Device Address: 0x{response['device_addr']:02X}")
+            print(f"  Command: 0x{response['command']:02X}")
+            print(f"  Payload Length: {len(response['payload'])} bytes")
+            
+            if response['payload']:
+                print(f"  Raw Payload: {response['payload'].hex(' ').upper()}")
+            else:
+                print("  No payload data received")
+                
+        else:
+            print("✗ Failed to execute absolute position control command!")
+            print("  Device may not be responding or command not supported")
+        
+        input("\nPress Enter to continue...")
+
+    def test_relative_position_control(self):
+        """Test Command 0x23 - Relative Position Control"""
+        if not self.connected:
+            print("✗ Not connected to motor.")
+            input("Press Enter to continue...")
+            return
+        
+        self.print_header()
+        print("=== Test Command 0x23 (Relative Position Control) ===\n")
+        
+        print("📝 Relative Position Control Parameters:")
+        print("  • Relative Movement: Distance to move from current position")
+        print("  • Unit: Count (rotation = value/16384 Count)")
+        print("  • Positive = forward, negative = backward")
+        print("  • 1 full rotation = 16384 counts = 360°")
+        
+        # Read current motor state first
+        print("\n🔍 Reading current motor state...")
+        current_response = self.motor.read_realtime_info()
+        if current_response and 'parsed_data' in current_response:
+            current_data = current_response['parsed_data']
+            current_counts = int(current_data['abs_angle_deg'] * 16384 / 360)
+            print("✓ Current motor state:")
+            print(f"  Current Position: {current_data['abs_angle_deg']:.2f}° ({current_counts} counts)")
+            print(f"  Multi-turn Position: {current_data['multi_angle_deg']:.2f}°")
+            print(f"  Motor Speed: {current_data['speed_rpm']:.2f} RPM")
+            print(f"  Operating Status: {current_data['operating_status']}")
+            print(f"  Motor Status: 0x{current_data['motor_status']:02X}")
+        else:
+            print("⚠ Could not read current motor status")
+            current_data = None
+        
+        # Get relative movement from user
+        print(f"\n📊 Set Relative Position Control Parameters:")
+        print(f"Input options:")
+        print(f"  1. Enter movement in counts (16384 = 1 rotation)")
+        print(f"  2. Enter movement in degrees (360° = 1 rotation)")
+        
+        input_mode = self.get_user_input("Select input mode (1=counts, 2=degrees)", int, 1)
+        
+        if input_mode == 1:
+            relative_position_counts = self.get_user_input("Enter relative movement (counts, +/-)", int, 0)
+            relative_degrees = self.motor.counts_to_degrees(relative_position_counts)
+        else:
+            relative_degrees = self.get_user_input("Enter relative movement (degrees, +/-)", float, 0.0)
+            relative_position_counts = self.motor.degrees_to_counts(relative_degrees)
+        
+        # Show summary
+        print(f"\n📋 Command Summary:")
+        print(f"  Relative Movement: {relative_position_counts} counts ({relative_degrees:.2f}°)")
+        if current_data:
+            final_position = current_data['abs_angle_deg'] + relative_degrees
+            print(f"  Current Position: {current_data['abs_angle_deg']:.2f}°")
+            print(f"  Expected Final Position: {final_position:.2f}°")
+        
+        # Safety confirmation for large movements
+        if abs(relative_position_counts) > 32768:  # > 2 rotations
+            print(f"\n⚠ WARNING: Large movement requested ({relative_degrees/360:.1f} rotations)")
+            print(f"  Ensure motor can safely make this movement!")
+            confirm = input("\nProceed with large movement? (yes/no): ").strip().lower()
+            if confirm != 'yes':
+                print("Command cancelled.")
+                input("\nPress Enter to continue...")
+                return
+        elif relative_position_counts != 0:
+            confirm = input(f"\nProceed with relative position control? (y/n): ").strip().lower()
+            if confirm != 'y':
+                print("Command cancelled.")
+                input("\nPress Enter to continue...")
+                return
+        
+        print(f"\n🔧 Sending relative position control command...")
+        
+        response = self.motor.relative_position_control(relative_position_counts)
+        
+        if response:
+            print("✓ Relative position control command executed successfully!")
+            
+            if 'parsed_data' in response:
+                motor_data = response['parsed_data']
+                new_counts = int(motor_data['abs_angle_deg'] * 16384 / 360)
+                print(f"\n📊 Updated Motor State:")
+                print(f"  Position: {motor_data['abs_angle_deg']:.2f}° ({new_counts} counts)")
+                print(f"  Multi-turn Position: {motor_data['multi_angle_deg']:.2f}°")
+                print(f"  Motor Speed: {motor_data['speed_rpm']:.2f} RPM")
+                print(f"  Q-axis Current: {motor_data['current_a']:.3f} A")
+                print(f"  Operating Status: {motor_data['operating_status']}")
+                print(f"  Motor Status: 0x{motor_data['motor_status']:02X}")
+                print(f"  Fault Code: 0x{motor_data['fault_code']:02X}")
+                
+                if motor_data['fault_code'] == 0:
+                    print("✓ No faults detected")
+                else:
+                    print("⚠ Fault detected!")
+            
+            print(f"\nCommand Response Details:")
+            print(f"  Packet ID: 0x{response['packet_id']:02X}")
+            print(f"  Device Address: 0x{response['device_addr']:02X}")
+            print(f"  Command: 0x{response['command']:02X}")
+            print(f"  Payload Length: {len(response['payload'])} bytes")
+            
+            if response['payload']:
+                print(f"  Raw Payload: {response['payload'].hex(' ').upper()}")
+            else:
+                print("  No payload data received")
+                
+        else:
+            print("✗ Failed to execute relative position control command!")
+            print("  Device may not be responding or command not supported")
+        
+        input("\nPress Enter to continue...")
+
+    def test_return_home(self):
+        """Test Command 0x24 - Return Home"""
+        if not self.connected:
+            print("✗ Not connected to motor.")
+            input("Press Enter to continue...")
+            return
+        
+        self.print_header()
+        print("=== Test Command 0x24 (Return Home) ===\n")
+        
+        print("📝 Return Home Command:")
+        print("  • Returns motor to its home position")
+        print("  • No parameters required")
+        print("  • Home position is typically where encoder was calibrated")
+        
+        # Read current motor state first
+        print("\n🔍 Reading current motor state...")
+        current_response = self.motor.read_realtime_info()
+        if current_response and 'parsed_data' in current_response:
+            current_data = current_response['parsed_data']
+            print("✓ Current motor state:")
+            print(f"  Current Position: {current_data['abs_angle_deg']:.2f}°")
+            print(f"  Multi-turn Position: {current_data['multi_angle_deg']:.2f}°")
+            print(f"  Motor Speed: {current_data['speed_rpm']:.2f} RPM")
+            print(f"  Operating Status: {current_data['operating_status']}")
+            print(f"  Motor Status: 0x{current_data['motor_status']:02X}")
+        else:
+            print("⚠ Could not read current motor status")
+        
+        # Confirmation
+        confirm = input(f"\nProceed with return home command? (y/n): ").strip().lower()
+        if confirm != 'y':
+            print("Command cancelled.")
+            input("\nPress Enter to continue...")
+            return
+        
+        print(f"\n🔧 Sending return home command...")
+        
+        response = self.motor.return_home()
+        
+        if response:
+            print("✓ Return home command executed successfully!")
+            
+            if 'parsed_data' in response:
+                motor_data = response['parsed_data']
+                print(f"\n📊 Updated Motor State:")
+                print(f"  Position: {motor_data['abs_angle_deg']:.2f}°")
+                print(f"  Multi-turn Position: {motor_data['multi_angle_deg']:.2f}°")
+                print(f"  Motor Speed: {motor_data['speed_rpm']:.2f} RPM")
+                print(f"  Q-axis Current: {motor_data['current_a']:.3f} A")
+                print(f"  Operating Status: {motor_data['operating_status']}")
+                print(f"  Motor Status: 0x{motor_data['motor_status']:02X}")
+                print(f"  Fault Code: 0x{motor_data['fault_code']:02X}")
+                
+                if motor_data['fault_code'] == 0:
+                    print("✓ No faults detected")
+                else:
+                    print("⚠ Fault detected!")
+            
+            print(f"\nCommand Response Details:")
+            print(f"  Packet ID: 0x{response['packet_id']:02X}")
+            print(f"  Device Address: 0x{response['device_addr']:02X}")
+            print(f"  Command: 0x{response['command']:02X}")
+            print(f"  Payload Length: {len(response['payload'])} bytes")
+            
+            if response['payload']:
+                print(f"  Raw Payload: {response['payload'].hex(' ').upper()}")
+            else:
+                print("  No payload data received")
+                
+        else:
+            print("✗ Failed to execute return home command!")
+            print("  Device may not be responding or command not supported")
+        
+        input("\nPress Enter to continue...")
+
+    def test_brake_control(self):
+        """Test Command 0x2E - Brake Control"""
+        if not self.connected:
+            print("✗ Not connected to motor.")
+            input("Press Enter to continue...")
+            return
+        
+        self.print_header()
+        print("=== Test Command 0x2E (Brake Control) ===\n")
+        
+        print("📝 Brake Control Operations:")
+        print("  • Off (0): Switch brake off")
+        print("  • On (1): Switch brake on")
+        print("  • Read (255): Read current brake status")
+        
+        # Read current motor state first
+        print("\n🔍 Reading current motor state...")
+        current_response = self.motor.read_realtime_info()
+        if current_response and 'parsed_data' in current_response:
+            current_data = current_response['parsed_data']
+            print("✓ Current motor state:")
+            print(f"  Motor Speed: {current_data['speed_rpm']:.2f} RPM")
+            print(f"  Operating Status: {current_data['operating_status']}")
+            print(f"  Motor Status: 0x{current_data['motor_status']:02X}")
+            print(f"  Fault Code: 0x{current_data['fault_code']:02X}")
+        else:
+            print("⚠ Could not read current motor status")
+        
+        # Get brake operation from user
+        print(f"\n📊 Select Brake Operation:")
+        print(f"  1. Switch brake OFF")
+        print(f"  2. Switch brake ON")
+        print(f"  3. Read brake status")
+        
+        choice = self.get_user_input("Select operation (1-3)", int, 3)
+        
+        operation_map = {1: 0, 2: 1, 3: 255}
+        operation_names = {1: "off", 2: "on", 3: "read status"}
+        
+        if choice not in operation_map:
+            print("Invalid choice.")
+            input("\nPress Enter to continue...")
+            return
+        
+        operation = operation_map[choice]
+        operation_name = operation_names[choice]
+        
+        # Show summary
+        print(f"\n📋 Command Summary:")
+        print(f"  Brake Operation: {operation_name} (code: {operation})")
+        
+        # Confirmation
+        confirm = input(f"\nProceed with brake {operation_name}? (y/n): ").strip().lower()
+        if confirm != 'y':
+            print("Command cancelled.")
+            input("\nPress Enter to continue...")
+            return
+        
+        print(f"\n🔧 Sending brake control command...")
+        
+        response = self.motor.brake_control(operation)
+        
+        if response:
+            print("✓ Brake control command executed successfully!")
+            
+            if 'parsed_data' in response:
+                motor_data = response['parsed_data']
+                print(f"\n📊 Updated Motor State:")
+                print(f"  Motor Speed: {motor_data['speed_rpm']:.2f} RPM")
+                print(f"  Q-axis Current: {motor_data['current_a']:.3f} A")
+                print(f"  Operating Status: {motor_data['operating_status']}")
+                print(f"  Motor Status: 0x{motor_data['motor_status']:02X}")
+                print(f"  Fault Code: 0x{motor_data['fault_code']:02X}")
+                
+                if motor_data['fault_code'] == 0:
+                    print("✓ No faults detected")
+                else:
+                    print("⚠ Fault detected!")
+            
+            print(f"\nCommand Response Details:")
+            print(f"  Packet ID: 0x{response['packet_id']:02X}")
+            print(f"  Device Address: 0x{response['device_addr']:02X}")
+            print(f"  Command: 0x{response['command']:02X}")
+            print(f"  Payload Length: {len(response['payload'])} bytes")
+            
+            if response['payload']:
+                print(f"  Raw Payload: {response['payload'].hex(' ').upper()}")
+            else:
+                print("  No payload data received")
+                
+        else:
+            print("✗ Failed to execute brake control command!")
+            print("  Device may not be responding or command not supported")
+        
+        input("\nPress Enter to continue...")
+
+    def test_disable_motor(self):
+        """Test Command 0x2F - Disable Motor"""
+        if not self.connected:
+            print("✗ Not connected to motor.")
+            input("Press Enter to continue...")
+            return
+        
+        self.print_header()
+        print("=== Test Command 0x2F (Disable Motor) ===\n")
+        
+        print("📝 Disable Motor Command:")
+        print("  • Disables motor operation")
+        print("  • Motor will stop and become inactive")
+        print("  • No parameters required")
+        
+        # Read current motor state first
+        print("\n🔍 Reading current motor state...")
+        current_response = self.motor.read_realtime_info()
+        if current_response and 'parsed_data' in current_response:
+            current_data = current_response['parsed_data']
+            print("✓ Current motor state:")
+            print(f"  Motor Speed: {current_data['speed_rpm']:.2f} RPM")
+            print(f"  Q-axis Current: {current_data['current_a']:.3f} A")
+            print(f"  Operating Status: {current_data['operating_status']}")
+            print(f"  Motor Status: 0x{current_data['motor_status']:02X}")
+            print(f"  Fault Code: 0x{current_data['fault_code']:02X}")
+        else:
+            print("⚠ Could not read current motor status")
+        
+        # Confirmation
+        print(f"\n⚠ WARNING: This will disable the motor!")
+        confirm = input(f"\nProceed with motor disable? (y/n): ").strip().lower()
+        if confirm != 'y':
+            print("Command cancelled.")
+            input("\nPress Enter to continue...")
+            return
+        
+        print(f"\n🔧 Sending motor disable command...")
+        
+        response = self.motor.disable_motor()
+        
+        if response:
+            print("✓ Motor disable command executed successfully!")
+            
+            if 'parsed_data' in response:
+                motor_data = response['parsed_data']
+                print(f"\n📊 Updated Motor State:")
+                print(f"  Motor Speed: {motor_data['speed_rpm']:.2f} RPM")
+                print(f"  Q-axis Current: {motor_data['current_a']:.3f} A")
+                print(f"  Operating Status: {motor_data['operating_status']}")
+                print(f"  Motor Status: 0x{motor_data['motor_status']:02X}")
+                print(f"  Fault Code: 0x{motor_data['fault_code']:02X}")
+                
+                if motor_data['fault_code'] == 0:
+                    print("✓ No faults detected")
+                else:
+                    print("⚠ Fault detected!")
+            
+            print(f"\nCommand Response Details:")
+            print(f"  Packet ID: 0x{response['packet_id']:02X}")
+            print(f"  Device Address: 0x{response['device_addr']:02X}")
+            print(f"  Command: 0x{response['command']:02X}")
+            print(f"  Payload Length: {len(response['payload'])} bytes")
+            
+            if response['payload']:
+                print(f"  Raw Payload: {response['payload'].hex(' ').upper()}")
+            else:
+                print("  No payload data received")
+                
+        else:
+            print("✗ Failed to execute motor disable command!")
             print("  Device may not be responding or command not supported")
         
         input("\nPress Enter to continue...")
