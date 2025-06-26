@@ -549,6 +549,43 @@ class SteadyWinRS485Tester:
         
         input("\nPress Enter to continue...")
     
+    def test_read_control_parameters(self):
+        """Test Command 0x14 - Read Control Parameters (PID and Output Limits)"""
+        if not self.connected:
+            print("✗ Not connected to motor.")
+            input("Press Enter to continue...")
+            return
+        self.print_header()
+        print("=== Test Command 0x14 (Read Control Parameters) ===\n")
+        print("Reading control parameters from motor...")
+        response = self.motor.read_control_parameters()
+        if response:
+            print("✓ Successfully read control parameters!")
+            print(f"\nResponse Details:")
+            print(f"  Packet ID: 0x{response['packet_id']:02X}")
+            print(f"  Device Address: 0x{response['device_addr']:02X}")
+            print(f"  Command: 0x{response['command']:02X}")
+            print(f"  Payload Length: {len(response['payload'])} bytes")
+            if response['payload']:
+                print(f"  Raw Payload: {response['payload'].hex(' ').upper()}")
+                if 'parsed_data' in response:
+                    parsed = response['parsed_data']
+                    print("\nParsed Control Parameters:")
+                    print(f"  Position Loop Kp         : {parsed['position_kp']:.4f}")
+                    print(f"  Position Loop Ki         : {parsed['position_ki']:.4f}")
+                    print(f"  Position Output Limit    : {parsed['position_output_limit_rpm']:.2f} RPM (raw: {parsed['position_output_limit_raw']})")
+                    print(f"  Speed Loop Kp            : {parsed['speed_kp']:.4f}")
+                    print(f"  Speed Loop Ki            : {parsed['speed_ki']:.4f}")
+                    print(f"  Speed Output Limit       : {parsed['speed_output_limit_a']:.3f} A (raw: {parsed['speed_output_limit_raw']})")
+                else:
+                    print("\n⚠ Raw payload parsing failed, showing hex data only")
+            else:
+                print("  No payload data received")
+        else:
+            print("✗ Failed to read control parameters!")
+            print("  Device may not be responding or command not supported")
+        input("\nPress Enter to continue...")
+    
     def test_write_user_parameters(self):
         """Test Command 0x11 - Write User Parameters (Interactive)"""
         if not self.connected:
@@ -1138,13 +1175,15 @@ class SteadyWinRS485Tester:
         print("4. Test Command 0x0F (Clear Faults)")
         print("5. Test Command 0x10 (Read User Parameters)")
         print("6. Test Command 0x11 (Write User Parameters)")
-        print("7. Test Manual Packet")
-        print("8. Reset Connection")
-        print("9. Enable/Disable Debug Logging")
-        print("10. Exit")
+        print("7. Test Command 0x14 (Read Control Parameters)")
+        print("8. Test Command 0x15 (Write Control Parameters)")
+        print("9. Test Command 0x16 (Write and Save Control Parameters)")
+        print("10. Test Manual Packet")
+        print("11. Reset Connection")
+        print("12. Enable/Disable Debug Logging")
+        print("13. Exit")
         print()
-        
-        choice = self.get_user_input("Select option (1-10)", int)
+        choice = self.get_user_input("Select option (1-13)", int)
         return choice
     
     def run(self):
@@ -1184,15 +1223,21 @@ class SteadyWinRS485Tester:
                 elif choice == 6:
                     self.test_write_user_parameters()
                 elif choice == 7:
-                    self.test_manual_packet()
+                    self.test_read_control_parameters()
                 elif choice == 8:
-                    self.reset_connection()
+                    self.test_write_control_parameters()
                 elif choice == 9:
-                    self.toggle_debug_logging()
+                    self.test_write_control_parameters_and_save()
                 elif choice == 10:
+                    self.test_manual_packet()
+                elif choice == 11:
+                    self.reset_connection()
+                elif choice == 12:
+                    self.toggle_debug_logging()
+                elif choice == 13:
                     break
                 else:
-                    print("Invalid choice. Please select 1-10.")
+                    print("Invalid choice. Please select 1-13.")
                     input("Press Enter to continue...")
         
         except KeyboardInterrupt:
@@ -1202,6 +1247,222 @@ class SteadyWinRS485Tester:
             if self.motor and self.connected:
                 self.motor.disconnect()
             print("Goodbye!")
+
+    def test_write_control_parameters(self):
+        """Test Command 0x15 - Write Control Parameters (Interactive)"""
+        if not self.connected:
+            print("✗ Not connected to motor.")
+            input("Press Enter to continue...")
+            return
+        self.print_header()
+        print("=== Test Command 0x15 (Write Control Parameters) - Interactive ===\n")
+        print("This test allows you to interactively modify control (PID/output) parameters.")
+        print("⚠ WARNING: This will modify actual control parameters (temporarily)!")
+        
+        # Read current control parameters
+        print("📖 Reading current control parameters...")
+        current_response = self.motor.read_control_parameters()
+        
+        if not current_response or 'parsed_data' not in current_response:
+            print("✗ Failed to read current control parameters. Cannot proceed safely.")
+            input("Press Enter to continue...")
+            return
+        
+        current_params = current_response['parsed_data']
+        
+        param_info = [
+            {'key': 'position_kp', 'label': 'Position Loop Kp', 'type': float},
+            {'key': 'position_ki', 'label': 'Position Loop Ki', 'type': float},
+            {'key': 'position_output_limit_rpm', 'label': 'Position Output Limit (RPM)', 'type': float},
+            {'key': 'speed_kp', 'label': 'Speed Loop Kp', 'type': float},
+            {'key': 'speed_ki', 'label': 'Speed Loop Ki', 'type': float},
+            {'key': 'speed_output_limit_a', 'label': 'Speed Output Limit (A)', 'type': float},
+        ]
+        
+        while True:
+            self.print_header()
+            print("=== Control Parameter Modification Menu (TEMPORARY) ===\n")
+            
+            for idx, info in enumerate(param_info, 1):
+                val = current_params[info['key']]
+                print(f"  {idx}. {info['label']:<28}: {val}")
+            print(" -1. Back to Main Menu")
+            
+            try:
+                choice = self.get_user_input("\nSelect parameter to modify (1-6 or -1 to go back)", int)
+                
+                if choice == -1:
+                    break
+                elif 1 <= choice <= 6:
+                    info = param_info[choice-1]
+                    current_val = current_params[info['key']]
+                    new_val = self.get_user_input(f"Enter new value for {info['label']}", info['type'], current_val)
+                    
+                    # Confirm
+                    print(f"\nConfirm TEMPORARY parameter change:")
+                    print(f"  Parameter: {info['label']}")
+                    print(f"  Old value: {current_val}")
+                    print(f"  New value: {new_val}")
+                    print(f"  ℹ This change is temporary (lost on motor restart)")
+                    confirm = input("\nProceed with temporary change? (y/n): ").strip().lower()
+                    
+                    if confirm != 'y':
+                        print("Change cancelled.")
+                        continue
+                    
+                    # Build new parameter dict for write
+                    write_dict = {
+                        'position_kp': current_params['position_kp'],
+                        'position_ki': current_params['position_ki'],
+                        'position_output_limit_raw': int(round(current_params['position_output_limit_rpm'] / 0.01)),
+                        'speed_kp': current_params['speed_kp'],
+                        'speed_ki': current_params['speed_ki'],
+                        'speed_output_limit_raw': int(round(current_params['speed_output_limit_a'] / 0.001)),
+                    }
+                    
+                    # Update the selected parameter
+                    if info['key'] == 'position_output_limit_rpm':
+                        write_dict['position_output_limit_raw'] = int(round(float(new_val) / 0.01))
+                    elif info['key'] == 'speed_output_limit_a':
+                        write_dict['speed_output_limit_raw'] = int(round(float(new_val) / 0.001))
+                    else:
+                        write_dict[info['key']] = float(new_val)
+                    
+                    print("\n📝 Writing control parameter change (temporary)...")
+                    write_response = self.motor.write_control_parameters(parameters_dict=write_dict)
+                    
+                    if write_response:
+                        print("✓ Control parameter change executed successfully!")
+                        print("🔍 Verifying parameter change...")
+                        import time
+                        time.sleep(0.2)
+                        verify_response = self.motor.read_control_parameters()
+                        if verify_response and 'parsed_data' in verify_response:
+                            verify_params = verify_response['parsed_data']
+                            print("✓ Parameter change verified!")
+                            print(f"  New value: {verify_params[info['key']]}")
+                            current_params = verify_params
+                        else:
+                            print("⚠ Could not verify parameter change")
+                    else:
+                        print("✗ Failed to write control parameter!")
+                else:
+                    print("Invalid choice. Please select 1-6 or -1 to go back.")
+                    input("Press Enter to continue...")
+                    
+            except KeyboardInterrupt:
+                print("\nOperation cancelled.")
+                break
+        
+        print(f"\n✓ Write control parameters test completed!")
+
+    def test_write_control_parameters_and_save(self):
+        """Test Command 0x16 - Write and Save Control Parameters (Interactive)"""
+        if not self.connected:
+            print("✗ Not connected to motor.")
+            input("Press Enter to continue...")
+            return
+        self.print_header()
+        print("=== Test Command 0x16 (Write and Save Control Parameters) - Interactive ===\n")
+        print("This test allows you to interactively modify control (PID/output) parameters.")
+        print("⚠ WARNING: This will PERMANENTLY modify and save control parameters!")
+        
+        # Read current control parameters
+        print("📖 Reading current control parameters...")
+        current_response = self.motor.read_control_parameters()
+        
+        if not current_response or 'parsed_data' not in current_response:
+            print("✗ Failed to read current control parameters. Cannot proceed safely.")
+            input("Press Enter to continue...")
+            return
+        
+        current_params = current_response['parsed_data']
+        
+        param_info = [
+            {'key': 'position_kp', 'label': 'Position Loop Kp', 'type': float},
+            {'key': 'position_ki', 'label': 'Position Loop Ki', 'type': float},
+            {'key': 'position_output_limit_rpm', 'label': 'Position Output Limit (RPM)', 'type': float},
+            {'key': 'speed_kp', 'label': 'Speed Loop Kp', 'type': float},
+            {'key': 'speed_ki', 'label': 'Speed Loop Ki', 'type': float},
+            {'key': 'speed_output_limit_a', 'label': 'Speed Output Limit (A)', 'type': float},
+        ]
+        
+        while True:
+            self.print_header()
+            print("=== Control Parameter Modification Menu (SAVE TO MEMORY) ===\n")
+            
+            for idx, info in enumerate(param_info, 1):
+                val = current_params[info['key']]
+                print(f"  {idx}. {info['label']:<28}: {val}")
+            print(" -1. Back to Main Menu")
+            
+            try:
+                choice = self.get_user_input("\nSelect parameter to modify (1-6 or -1 to go back)", int)
+                
+                if choice == -1:
+                    break
+                elif 1 <= choice <= 6:
+                    info = param_info[choice-1]
+                    current_val = current_params[info['key']]
+                    new_val = self.get_user_input(f"Enter new value for {info['label']}", info['type'], current_val)
+                    
+                    # Confirm
+                    print(f"\nConfirm PERMANENT parameter change:")
+                    print(f"  Parameter: {info['label']}")
+                    print(f"  Old value: {current_val}")
+                    print(f"  New value: {new_val}")
+                    print(f"  ⚠ This change will be SAVED to non-volatile memory!")
+                    confirm = input("\nProceed with PERMANENT change? (y/n): ").strip().lower()
+                    
+                    if confirm != 'y':
+                        print("Change cancelled.")
+                        continue
+                    
+                    # Build new parameter dict for write
+                    write_dict = {
+                        'position_kp': current_params['position_kp'],
+                        'position_ki': current_params['position_ki'],
+                        'position_output_limit_raw': int(round(current_params['position_output_limit_rpm'] / 0.01)),
+                        'speed_kp': current_params['speed_kp'],
+                        'speed_ki': current_params['speed_ki'],
+                        'speed_output_limit_raw': int(round(current_params['speed_output_limit_a'] / 0.001)),
+                    }
+                    
+                    # Update the selected parameter
+                    if info['key'] == 'position_output_limit_rpm':
+                        write_dict['position_output_limit_raw'] = int(round(float(new_val) / 0.01))
+                    elif info['key'] == 'speed_output_limit_a':
+                        write_dict['speed_output_limit_raw'] = int(round(float(new_val) / 0.001))
+                    else:
+                        write_dict[info['key']] = float(new_val)
+                    
+                    print("\n📝 Writing and saving control parameter change...")
+                    write_response = self.motor.write_control_parameters_and_save(parameters_dict=write_dict)
+                    
+                    if write_response:
+                        print("✓ Control parameter change executed and saved successfully!")
+                        print("🔍 Verifying parameter change...")
+                        import time
+                        time.sleep(0.2)
+                        verify_response = self.motor.read_control_parameters()
+                        if verify_response and 'parsed_data' in verify_response:
+                            verify_params = verify_response['parsed_data']
+                            print("✓ Parameter change verified!")
+                            print(f"  New value: {verify_params[info['key']]}")
+                            current_params = verify_params
+                        else:
+                            print("⚠ Could not verify parameter change")
+                    else:
+                        print("✗ Failed to write and save control parameter!")
+                else:
+                    print("Invalid choice. Please select 1-6 or -1 to go back.")
+                    input("Press Enter to continue...")
+                    
+            except KeyboardInterrupt:
+                print("\nOperation cancelled.")
+                break
+        
+        print(f"\n✓ Write and save control parameters test completed!")
 
 
 def main():

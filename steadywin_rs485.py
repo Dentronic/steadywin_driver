@@ -1067,6 +1067,170 @@ class SteadyWinRS485:
         self.logger.info(f"Setting fault continuous duration to: {dur}")
         return self.write_user_parameters({'fault_continuous_duration': dur})
 
+    def _parse_control_parameters(self, payload):
+        """
+        Parse control parameters payload from command 0x14 response
+        Args:
+            payload (bytes): Raw payload data from command 0x14 response
+        Returns:
+            dict: Parsed control parameters or None if invalid
+        """
+        if len(payload) < 0x18:  # 24 bytes expected
+            self.logger.error(f"Control parameters payload too short: {len(payload)} bytes (expected 24)")
+            return None
+        try:
+            # All values are little-endian
+            offset = 0
+            pos_kp = struct.unpack('<f', payload[offset:offset+4])[0]
+            offset += 4
+            pos_ki = struct.unpack('<f', payload[offset:offset+4])[0]
+            offset += 4
+            pos_output_limit = struct.unpack('<I', payload[offset:offset+4])[0]  # 0.01rpm
+            offset += 4
+            spd_kp = struct.unpack('<f', payload[offset:offset+4])[0]
+            offset += 4
+            spd_ki = struct.unpack('<f', payload[offset:offset+4])[0]
+            offset += 4
+            spd_output_limit = struct.unpack('<I', payload[offset:offset+4])[0]  # 0.001A
+            # No offset increment needed; done
+            return {
+                'position_kp': pos_kp,
+                'position_ki': pos_ki,
+                'position_output_limit_raw': pos_output_limit,
+                'position_output_limit_rpm': pos_output_limit * 0.01,
+                'speed_kp': spd_kp,
+                'speed_ki': spd_ki,
+                'speed_output_limit_raw': spd_output_limit,
+                'speed_output_limit_a': spd_output_limit * 0.001
+            }
+        except Exception as e:
+            self.logger.error(f"Error parsing control parameters: {e}")
+            return None
+
+    def read_control_parameters(self):
+        """
+        Read control parameters (Command 0x14)
+        This command reads the PID and output limit parameters for position and speed loops.
+        No payload is required for this command.
+        Returns:
+            dict: Response data containing control parameters, or None on error
+        """
+        self.logger.info("Reading control parameters (PID and output limits)")
+        response = self.send_command(0x14, b'', expect_response=True)
+        if response:
+            self.logger.info("✓ Control parameters read successfully")
+            parsed_data = self._parse_control_parameters(response['payload'])
+            if parsed_data:
+                response['parsed_data'] = parsed_data
+                return response
+            else:
+                self.logger.error("✗ Failed to parse control parameters payload")
+                return response
+        else:
+            self.logger.error("✗ Failed to read control parameters")
+            return None
+
+    def _build_control_parameters_payload(self, params):
+        """
+        Build control parameters payload from dictionary for command 0x15
+        Args:
+            params (dict): Dictionary with control parameter values
+        Returns:
+            bytes: 24-byte payload or None if error
+        """
+        try:
+            payload = bytearray(24)
+            # Position loop Kp (float32)
+            payload[0:4] = struct.pack('<f', float(params.get('position_kp', 0.0)))
+            # Position loop Ki (float32)
+            payload[4:8] = struct.pack('<f', float(params.get('position_ki', 0.0)))
+            # Position output limit (uint32, 0.01rpm)
+            payload[8:12] = struct.pack('<I', int(params.get('position_output_limit_raw', 0)))
+            # Speed loop Kp (float32)
+            payload[12:16] = struct.pack('<f', float(params.get('speed_kp', 0.0)))
+            # Speed loop Ki (float32)
+            payload[16:20] = struct.pack('<f', float(params.get('speed_ki', 0.0)))
+            # Speed output limit (uint32, 0.001A)
+            payload[20:24] = struct.pack('<I', int(params.get('speed_output_limit_raw', 0)))
+            return bytes(payload)
+        except Exception as e:
+            self.logger.error(f"Error building control parameters payload: {e}")
+            return None
+
+    def write_control_parameters(self, parameters_dict=None, raw_payload=None):
+        """
+        Write control parameters (Command 0x15)
+        This command writes the PID and output limit parameters for position and speed loops.
+        Args:
+            parameters_dict (dict): Dictionary with control parameter values
+            raw_payload (bytes): Raw 24-byte payload to write directly
+        Returns:
+            dict: Response data from motor, or None on error
+        """
+        if parameters_dict is None and raw_payload is None:
+            self.logger.error("Either parameters_dict or raw_payload must be provided")
+            return None
+        if raw_payload is not None:
+            if len(raw_payload) != 24:
+                self.logger.error(f"Raw payload must be exactly 24 bytes, got {len(raw_payload)}")
+                return None
+            payload = raw_payload
+        else:
+            payload = self._build_control_parameters_payload(parameters_dict)
+            if payload is None:
+                return None
+        self.logger.info("Writing control parameters (PID and output limits)")
+        response = self.send_command(0x15, payload, expect_response=True)
+        if response:
+            self.logger.info("✓ Control parameters written successfully")
+            parsed_data = self._parse_control_parameters(response['payload'])
+            response['parsed_data'] = parsed_data
+            return response
+        else:
+            self.logger.error("✗ Failed to write control parameters")
+            return None
+
+    def write_control_parameters_and_save(self, parameters_dict=None, raw_payload=None):
+        """
+        Write and save control parameters (Command 0x16)
+        
+        This command writes the PID and output limit parameters for position and speed loops
+        and saves them to non-volatile memory (unlike 0x15 which is temporary).
+        
+        Args:
+            parameters_dict (dict): Dictionary with control parameter values
+            raw_payload (bytes): Raw 24-byte payload to write directly
+            
+        Returns:
+            dict: Response data from motor, or None on error
+        """
+        if parameters_dict is None and raw_payload is None:
+            self.logger.error("Either parameters_dict or raw_payload must be provided")
+            return None
+            
+        if raw_payload is not None:
+            if len(raw_payload) != 24:
+                self.logger.error(f"Raw payload must be exactly 24 bytes, got {len(raw_payload)}")
+                return None
+            payload = raw_payload
+        else:
+            payload = self._build_control_parameters_payload(parameters_dict)
+            if payload is None:
+                return None
+        
+        self.logger.info("Writing and saving control parameters (PID and output limits)")
+        
+        response = self.send_command(0x16, payload, expect_response=True)
+        
+        if response:
+            self.logger.info("✓ Control parameters written and saved successfully")
+            parsed_data = self._parse_control_parameters(response['payload'])
+            response['parsed_data'] = parsed_data
+            return response
+        else:
+            self.logger.error("✗ Failed to write and save control parameters")
+            return None
+
 
 def setup_logging(level=logging.INFO):
     """Setup logging configuration"""
