@@ -1178,12 +1178,13 @@ class SteadyWinRS485Tester:
         print("7. Test Command 0x14 (Read Control Parameters)")
         print("8. Test Command 0x15 (Write Control Parameters)")
         print("9. Test Command 0x16 (Write and Save Control Parameters)")
-        print("10. Test Manual Packet")
-        print("11. Reset Connection")
-        print("12. Enable/Disable Debug Logging")
-        print("13. Exit")
+        print("10. Test Command 0x1D (Set Zero Position)")
+        print("11. Test Manual Packet")
+        print("12. Reset Connection")
+        print("13. Enable/Disable Debug Logging")
+        print("14. Exit")
         print()
-        choice = self.get_user_input("Select option (1-13)", int)
+        choice = self.get_user_input("Select option (1-14)", int)
         return choice
     
     def run(self):
@@ -1229,15 +1230,17 @@ class SteadyWinRS485Tester:
                 elif choice == 9:
                     self.test_write_control_parameters_and_save()
                 elif choice == 10:
-                    self.test_manual_packet()
+                    self.test_set_zero_position()
                 elif choice == 11:
-                    self.reset_connection()
+                    self.test_manual_packet()
                 elif choice == 12:
-                    self.toggle_debug_logging()
+                    self.reset_connection()
                 elif choice == 13:
+                    self.toggle_debug_logging()
+                elif choice == 14:
                     break
                 else:
-                    print("Invalid choice. Please select 1-13.")
+                    print("Invalid choice. Please select 1-14.")
                     input("Press Enter to continue...")
         
         except KeyboardInterrupt:
@@ -1463,6 +1466,78 @@ class SteadyWinRS485Tester:
                 break
         
         print(f"\n✓ Write and save control parameters test completed!")
+
+    def test_set_zero_position(self):
+        """Test Command 0x1D - Set Zero Position"""
+        if not self.connected:
+            print("✗ Not connected to motor.")
+            input("Press Enter to continue...")
+            return
+        
+        self.print_header()
+        print("=== Test Command 0x1D (Set Zero Position) ===\n")
+        
+        print("This command sets the current motor position as the zero/origin reference point.")
+        print("⚠ WARNING: This will change the motor's position reference!")
+        
+        # Read current position first
+        print("📖 Reading current motor position...")
+        realtime_response = self.motor.read_realtime_info()
+        
+        if realtime_response and 'parsed_data' in realtime_response:
+            current_data = realtime_response['parsed_data']
+            print(f"✓ Current position information:")
+            print(f"  Absolute Angle: {current_data['abs_angle_deg']:.2f}°")
+            print(f"  Multi-turn Angle: {current_data['multi_angle_deg']:.2f}°")
+        else:
+            print("⚠ Could not read current position")
+        
+        # Confirm action
+        print(f"\nConfirm zero position setting:")
+        print(f"  This will set the current position as the new zero reference")
+        print(f"  ⚠ Position measurements will be relative to this new zero point")
+        confirm = input("\nProceed with setting zero position? (y/n): ").strip().lower()
+        
+        if confirm != 'y':
+            print("Operation cancelled.")
+            input("\nPress Enter to continue...")
+            return
+        
+        print("\n🎯 Setting current position as zero...")
+        response = self.motor.set_zero_position()
+        
+        if response:
+            print("✓ Zero position set successfully!")
+            print(f"\nResponse Details:")
+            print(f"  Packet ID: 0x{response['packet_id']:02X}")
+            print(f"  Device Address: 0x{response['device_addr']:02X}")
+            print(f"  Command: 0x{response['command']:02X}")
+            print(f"  Payload Length: {len(response['payload'])} bytes")
+            
+            if response['payload']:
+                print(f"  Raw Payload: {response['payload'].hex(' ').upper()}")
+            else:
+                print("  No payload data received")
+            
+            # Read position again to verify
+            print("\n🔍 Verifying new zero position...")
+            import time
+            time.sleep(0.2)
+            verify_response = self.motor.read_realtime_info()
+            
+            if verify_response and 'parsed_data' in verify_response:
+                verify_data = verify_response['parsed_data']
+                print("✓ Position after zero setting:")
+                print(f"  Absolute Angle: {verify_data['abs_angle_deg']:.2f}°")
+                print(f"  Multi-turn Angle: {verify_data['multi_angle_deg']:.2f}°")
+            else:
+                print("⚠ Could not verify new position")
+                
+        else:
+            print("✗ Failed to set zero position!")
+            print("  Device may not be responding or command not supported")
+        
+        input("\nPress Enter to continue...")
 
 
 def main():

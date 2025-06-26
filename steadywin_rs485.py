@@ -1231,6 +1231,27 @@ class SteadyWinRS485:
             self.logger.error("✗ Failed to write and save control parameters")
             return None
 
+    def set_zero_position(self):
+        """
+        Set current position as zero/origin (Command 0x1D)
+        
+        This command sets the current motor position as the zero reference point.
+        No payload is required for this command.
+        
+        Returns:
+            dict: Response data from motor, or None on error
+        """
+        self.logger.info("Setting current position as zero/origin")
+        
+        response = self.send_command(0x1D, b'', expect_response=True)
+        
+        if response:
+            self.logger.info("✓ Zero position set successfully")
+            return response
+        else:
+            self.logger.error("✗ Failed to set zero position")
+            return None
+
 
 def setup_logging(level=logging.INFO):
     """Setup logging configuration"""
