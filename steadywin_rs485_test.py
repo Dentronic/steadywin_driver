@@ -244,19 +244,109 @@ class SteadyWinRS485Tester:
             except Exception:
                 print("✗")
             
-            time.sleep(0.1)
-        
         return None
-    
-    def test_restart_slave(self):
-        """Test Command 0x00 - Restart Slave"""
+
+    # Helper methods to eliminate redundant patterns
+    def _require_connection(self):
+        """Check connection and handle error display"""
         if not self.connected:
             print("✗ Not connected to motor.")
             input("Press Enter to continue...")
+            return False
+        return True
+
+    def _test_header(self, command_hex, title, description=None):
+        """Standard test header display"""
+        self.print_header()
+        print(f"=== Test Command 0x{command_hex:02X} ({title}) ===\n")
+        if description:
+            print(description)
+            print()
+
+    def _test_footer(self):
+        """Standard test footer"""
+        input("\nPress Enter to continue...")
+
+    def _display_response_details(self, response, title="Response Details"):
+        """Display standard response information"""
+        if not response:
             return
         
-        self.print_header()
-        print("=== Test Command 0x00 (Restart Slave) ===\n")
+        print(f"\n{title}:")
+        print(f"  Packet ID: 0x{response['packet_id']:02X}")
+        print(f"  Device Address: 0x{response['device_addr']:02X}")
+        print(f"  Command: 0x{response['command']:02X}")
+        print(f"  Payload Length: {len(response['payload'])} bytes")
+        
+        if response['payload']:
+            print(f"  Raw Payload: {response['payload'].hex(' ').upper()}")
+        else:
+            print("  No payload data received")
+
+    def _display_motor_state(self, motor_data, title="Motor State", show_details=True):
+        """Display formatted motor state information"""
+        if not motor_data:
+            return
+        
+        print(f"\n📊 {title}:")
+        if show_details:
+            print(f"  Motor Speed: {motor_data['speed_rpm']:.2f} RPM")
+            print(f"  Q-axis Current: {motor_data['current_a']:.3f} A ({motor_data['current_raw']} mA)")
+            print(f"  Absolute Angle: {motor_data['abs_angle_deg']:.2f}°")
+            print(f"  Multi-turn Angle: {motor_data['multi_angle_deg']:.2f}°")
+            print(f"  Bus Voltage: {motor_data['voltage_v']:.2f} V")
+            print(f"  Bus Current: {motor_data['bus_current_a']:.2f} A")
+            print(f"  Temperature: {motor_data['work_temp_c']}°C")
+            
+        # Always show status and fault info
+        print(f"  Operating Status: {motor_data['operating_status']}")
+        print(f"  Motor Status: 0x{motor_data['motor_status']:02X}")
+        print(f"  Fault Code: 0x{motor_data['fault_code']:02X}")
+        
+        if motor_data['fault_code'] == 0:
+            print("✓ No faults detected")
+        else:
+            print("⚠ Fault detected!")
+
+    def _read_current_motor_state(self, title="Reading current motor state"):
+        """Read and display current motor state"""
+        print(f"\n🔍 {title}...")
+        response = self.motor.read_realtime_info()
+        if response and 'parsed_data' in response:
+            self._display_motor_state(response['parsed_data'], "Current motor state", show_details=False)
+            return response['parsed_data']
+        else:
+            print("⚠ Could not read current motor status")
+            return None
+
+    def _get_safety_confirmation(self, message, high_risk=False):
+        """Get safety confirmation from user"""
+        if high_risk:
+            confirm = input(f"\n{message} (yes/no): ").strip().lower()
+            return confirm == 'yes'
+        else:
+            confirm = input(f"\n{message} (y/n): ").strip().lower()
+            return confirm == 'y'
+
+    def _handle_command_response(self, response, command_name, show_motor_state=True):
+        """Handle command response display and parsing"""
+        if response:
+            print(f"✓ {command_name} executed successfully!")
+            
+            if show_motor_state and 'parsed_data' in response:
+                self._display_motor_state(response['parsed_data'], "Updated Motor State")
+            
+            self._display_response_details(response, "Command Response Details")
+        else:
+            print(f"✗ Failed to execute {command_name}!")
+            print("  Device may not be responding or command not supported")
+    
+    def test_restart_slave(self):
+        """Test Command 0x00 - Restart Slave"""
+        if not self._require_connection():
+            return
+        
+        self._test_header(0x00, "Restart Slave")
         
         print("Sending restart command to motor...")
         success = self.motor.restart_slave()
@@ -267,32 +357,23 @@ class SteadyWinRS485Tester:
         else:
             print("✗ Failed to send restart command!")
         
-        input("\nPress Enter to continue...")
+        self._test_footer()
     
     def test_read_system_info(self):
         """Test Command 0x0A - Read System Information"""
-        if not self.connected:
-            print("✗ Not connected to motor.")
-            input("Press Enter to continue...")
+        if not self._require_connection():
             return
         
-        self.print_header()
-        print("=== Test Command 0x0A (Read System Info) ===\n")
+        self._test_header(0x0A, "Read System Info")
         
         print("Reading system information from motor...")
         response = self.motor.read_system_info()
         
         if response:
             print("✓ Successfully read system information!")
-            print(f"\nResponse Details:")
-            print(f"  Packet ID: 0x{response['packet_id']:02X}")
-            print(f"  Device Address: 0x{response['device_addr']:02X}")
-            print(f"  Command: 0x{response['command']:02X}")
-            print(f"  Payload Length: {len(response['payload'])} bytes")
+            self._display_response_details(response)
             
             if response['payload']:
-                print(f"  Raw Payload: {response['payload'].hex(' ').upper()}")
-                
                 # According to protocol manual, this should contain:
                 # Boot, software, hardware, RS485 protocol and CAN protocol version
                 print(f"\nPayload Analysis:")
@@ -310,93 +391,79 @@ class SteadyWinRS485Tester:
                         print(f"  UID: {payload[15:26].hex(' ').upper()}")
                 else:
                     print(f"  Payload too short for detailed analysis")
-            else:
-                print("  No payload data received")
         else:
             print("✗ Failed to read system information!")
             print("  Device may not be responding or address is incorrect")
         
-        input("\nPress Enter to continue...")
+        self._test_footer()
     
     def test_read_realtime_info(self):
         """Test Command 0x0B - Read Real-time Information"""
-        if not self.connected:
-            print("✗ Not connected to motor.")
-            input("Press Enter to continue...")
+        if not self._require_connection():
             return
         
-        self.print_header()
-        print("=== Test Command 0x0B (Read Real-time Info) ===\n")
+        self._test_header(0x0B, "Read Real-time Info")
         
         print("Reading real-time information from motor...")
         response = self.motor.read_realtime_info()
         
         if response:
             print("✓ Successfully read real-time information!")
-            print(f"\nResponse Details:")
-            print(f"  Packet ID: 0x{response['packet_id']:02X}")
-            print(f"  Device Address: 0x{response['device_addr']:02X}")
-            print(f"  Command: 0x{response['command']:02X}")
-            print(f"  Payload Length: {len(response['payload'])} bytes")
+            self._display_response_details(response)
             
-            if response['payload']:
-                print(f"  Raw Payload: {response['payload'].hex(' ').upper()}")
+            # Display parsed data if available
+            if 'parsed_data' in response:
+                parsed = response['parsed_data']
+                print(f"\nParsed Real-time Data:")
+                print(f"- Absolute Angle: {parsed['abs_angle_deg']:.2f}° (raw: {parsed['abs_angle_raw']})")
+                print(f"- Multi-turn Angle: {parsed['multi_angle_deg']:.2f}° (raw: {parsed['multi_angle_raw']})")
+                print(f"- Motor Speed: {parsed['speed_rpm']:.2f} RPM (raw: {parsed['speed_raw']})")
+                print(f"- Q-axis Current: {parsed['current_a']:.3f} A (raw: {parsed['current_raw']})")
+                print(f"- Bus Voltage: {parsed['voltage_v']:.2f} V (raw: {parsed['voltage_raw']})")
+                print(f"- Bus Current: {parsed['bus_current_a']:.2f} A (raw: {parsed['bus_current_raw']})")
+                print(f"- Working Temperature: {parsed['work_temp_c']}°C")
                 
-                # Display parsed data if available
-                if 'parsed_data' in response:
-                    parsed = response['parsed_data']
-                    print(f"\nParsed Real-time Data:")
-                    print(f"- Absolute Angle: {parsed['abs_angle_deg']:.2f}° (raw: {parsed['abs_angle_raw']})")
-                    print(f"- Multi-turn Angle: {parsed['multi_angle_deg']:.2f}° (raw: {parsed['multi_angle_raw']})")
-                    print(f"- Motor Speed: {parsed['speed_rpm']:.2f} RPM (raw: {parsed['speed_raw']})")
-                    print(f"- Q-axis Current: {parsed['current_a']:.3f} A (raw: {parsed['current_raw']})")
-                    print(f"- Bus Voltage: {parsed['voltage_v']:.2f} V (raw: {parsed['voltage_raw']})")
-                    print(f"- Bus Current: {parsed['bus_current_a']:.2f} A (raw: {parsed['bus_current_raw']})")
-                    print(f"- Working Temperature: {parsed['work_temp_c']}°C")
-                    
-                    # Decode operating status
-                    op_status = parsed['operating_status']
-                    status_names = {
-                        0: "Shutdown",
-                        1: "Voltage Control", 
-                        2: "Current Control",
-                        3: "Speed Control",
-                        4: "Position Control"
-                    }
-                    op_name = status_names.get(op_status, f"Unknown({op_status})")
-                    print(f"- Operating Status: {op_name} (0x{op_status:02X})")
-                    
-                    # Decode motor status bits
-                    motor_status = parsed['motor_status']
-                    print(f"- Motor Status: 0x{motor_status:02X}", end="")
-                    if motor_status == 0:
-                        print(" (Off)")
-                    else:
-                        status_bits = []
-                        if motor_status & 0x01: status_bits.append("Voltage Ctrl")
-                        if motor_status & 0x02: status_bits.append("Voltage Ctrl") 
-                        if motor_status & 0x04: status_bits.append("Speed Ctrl")
-                        if motor_status & 0x08: status_bits.append("Encoder Fail")
-                        if motor_status & 0x40: status_bits.append("HW Fail")
-                        if motor_status & 0x80: status_bits.append("SW Fail")
-                        print(f" ({', '.join(status_bits) if status_bits else 'On'})")
-                    
-                    # Decode fault code
-                    fault = parsed['fault_code']
-                    print(f"- Fault Code: 0x{fault:02X}", end="")
-                    if fault == 0:
-                        print(" (No Fault)")
-                    else:
-                        print(f" (Fault Present)")
+                # Decode operating status
+                op_status = parsed['operating_status']
+                status_names = {
+                    0: "Shutdown",
+                    1: "Voltage Control", 
+                    2: "Current Control",
+                    3: "Speed Control",
+                    4: "Position Control"
+                }
+                op_name = status_names.get(op_status, f"Unknown({op_status})")
+                print(f"- Operating Status: {op_name} (0x{op_status:02X})")
+                
+                # Decode motor status bits
+                motor_status = parsed['motor_status']
+                print(f"- Motor Status: 0x{motor_status:02X}", end="")
+                if motor_status == 0:
+                    print(" (Off)")
                 else:
-                    print(f"\nRaw payload parsing failed, showing hex data only")
-            else:
-                print("  No payload data received")
+                    status_bits = []
+                    if motor_status & 0x01: status_bits.append("Voltage Ctrl")
+                    if motor_status & 0x02: status_bits.append("Voltage Ctrl") 
+                    if motor_status & 0x04: status_bits.append("Speed Ctrl")
+                    if motor_status & 0x08: status_bits.append("Encoder Fail")
+                    if motor_status & 0x40: status_bits.append("HW Fail")
+                    if motor_status & 0x80: status_bits.append("SW Fail")
+                    print(f" ({', '.join(status_bits) if status_bits else 'On'})")
+                
+                # Decode fault code
+                fault = parsed['fault_code']
+                print(f"- Fault Code: 0x{fault:02X}", end="")
+                if fault == 0:
+                    print(" (No Fault)")
+                else:
+                    print(f" (Fault Present)")
+            elif response['payload']:
+                print(f"\nRaw payload parsing failed, showing hex data only")
         else:
             print("✗ Failed to read real-time information!")
             print("  Device may not be responding or address is incorrect")
         
-        input("\nPress Enter to continue...")
+        self._test_footer()
     
     def test_clear_faults(self):
         """Test Command 0x0F - Clear Faults"""
@@ -441,7 +508,6 @@ class SteadyWinRS485Tester:
             
             # Verify fault clearing by reading status again
             print(f"\nVerifying fault status after clear command...")
-            time.sleep(0.1)  # Small delay
             verify_response = self.motor.read_realtime_info()
             
             if verify_response and 'parsed_data' in verify_response:
@@ -1548,8 +1614,6 @@ class SteadyWinRS485Tester:
             
             # Read position again to verify
             print("\n🔍 Verifying new zero position...")
-            import time
-            time.sleep(0.2)
             verify_response = self.motor.read_realtime_info()
             
             if verify_response and 'parsed_data' in verify_response:
@@ -1638,8 +1702,6 @@ class SteadyWinRS485Tester:
             
             # Read final status
             print("\n🔍 Reading final motor status...")
-            import time
-            time.sleep(0.2)
             verify_response = self.motor.read_realtime_info()
             
             if verify_response and 'parsed_data' in verify_response:
@@ -1786,33 +1848,19 @@ class SteadyWinRS485Tester:
 
     def test_q_axis_current_control(self):
         """Test Command 0x20 - Q-axis Current Control"""
-        if not self.connected:
-            print("✗ Not connected to motor.")
-            input("Press Enter to continue...")
+        if not self._require_connection():
             return
         
-        self.print_header()
-        print("=== Test Command 0x20 (Q-axis Current Control) ===\n")
+        description = ("📝 Q-axis Current Control Parameters:\n"
+                      "  • Target Current: Sets the desired Q-axis current\n"
+                      "  • Current Slope: Controls how fast current changes (0 = maximum slope)\n"
+                      "  • Force = Target Current × Torque Constant\n"
+                      "  • Positive current = one direction, negative = opposite direction")
         
-        print("📝 Q-axis Current Control Parameters:")
-        print("  • Target Current: Sets the desired Q-axis current")
-        print("  • Current Slope: Controls how fast current changes (0 = maximum slope)")
-        print("  • Force = Target Current × Torque Constant")
-        print("  • Positive current = one direction, negative = opposite direction")
+        self._test_header(0x20, "Q-axis Current Control", description)
         
         # Read current motor state first
-        print("\n🔍 Reading current motor state...")
-        current_response = self.motor.read_realtime_info()
-        if current_response and 'parsed_data' in current_response:
-            current_data = current_response['parsed_data']
-            print("✓ Current motor state:")
-            print(f"  Current Q-axis Current: {current_data['current_a']:.3f} A ({current_data['current_raw']} mA)")
-            print(f"  Motor Speed: {current_data['speed_rpm']:.2f} RPM")
-            print(f"  Operating Status: {current_data['operating_status']}")
-            print(f"  Motor Status: 0x{current_data['motor_status']:02X}")
-            print(f"  Fault Code: 0x{current_data['fault_code']:02X}")
-        else:
-            print("⚠ Could not read current motor status")
+        current_data = self._read_current_motor_state()
         
         # Get target current from user
         print(f"\n📊 Set Q-axis Current Control Parameters:")
@@ -1830,62 +1878,23 @@ class SteadyWinRS485Tester:
         
         # Safety confirmation for high currents
         if abs(target_current_ma) > 5000:  # > 5A
-            print(f"\n⚠ WARNING: High current requested ({target_current_ma/1000:.1f}A)")
-            print(f"  Ensure motor can handle this current safely!")
-            confirm = input("\nProceed with high current command? (yes/no): ").strip().lower()
-            if confirm != 'yes':
+            warning_msg = (f"⚠ WARNING: High current requested ({target_current_ma/1000:.1f}A)\n"
+                          f"  Ensure motor can handle this current safely!\n"
+                          f"Proceed with high current command?")
+            if not self._get_safety_confirmation(warning_msg, high_risk=True):
                 print("Command cancelled.")
-                input("\nPress Enter to continue...")
+                self._test_footer()
                 return
         elif abs(target_current_ma) > 0:
-            confirm = input(f"\nProceed with Q-axis current control? (y/n): ").strip().lower()
-            if confirm != 'y':
+            if not self._get_safety_confirmation("Proceed with Q-axis current control?"):
                 print("Command cancelled.")
-                input("\nPress Enter to continue...")
+                self._test_footer()
                 return
         
         print(f"\n🔧 Sending Q-axis current control command...")
-        
         response = self.motor.q_axis_current_control(target_current_ma, current_slope_ma_per_s)
-        
-        if response:
-            print("✓ Q-axis current control command executed successfully!")
-            
-            if 'parsed_data' in response:
-                motor_data = response['parsed_data']
-                print(f"\n📊 Updated Motor State:")
-                print(f"  Q-axis Current: {motor_data['current_a']:.3f} A ({motor_data['current_raw']} mA)")
-                print(f"  Motor Speed: {motor_data['speed_rpm']:.2f} RPM")
-                print(f"  Absolute Angle: {motor_data['abs_angle_deg']:.2f}°")
-                print(f"  Multi-turn Angle: {motor_data['multi_angle_deg']:.2f}°")
-                print(f"  Bus Voltage: {motor_data['voltage_v']:.2f} V")
-                print(f"  Bus Current: {motor_data['bus_current_a']:.2f} A")
-                print(f"  Temperature: {motor_data['work_temp_c']}°C")
-                print(f"  Operating Status: {motor_data['operating_status']}")
-                print(f"  Motor Status: 0x{motor_data['motor_status']:02X}")
-                print(f"  Fault Code: 0x{motor_data['fault_code']:02X}")
-                
-                if motor_data['fault_code'] == 0:
-                    print("✓ No faults detected")
-                else:
-                    print("⚠ Fault detected!")
-            
-            print(f"\nCommand Response Details:")
-            print(f"  Packet ID: 0x{response['packet_id']:02X}")
-            print(f"  Device Address: 0x{response['device_addr']:02X}")
-            print(f"  Command: 0x{response['command']:02X}")
-            print(f"  Payload Length: {len(response['payload'])} bytes")
-            
-            if response['payload']:
-                print(f"  Raw Payload: {response['payload'].hex(' ').upper()}")
-            else:
-                print("  No payload data received")
-                
-        else:
-            print("✗ Failed to execute Q-axis current control command!")
-            print("  Device may not be responding or command not supported")
-        
-        input("\nPress Enter to continue...")
+        self._handle_command_response(response, "Q-axis current control command")
+        self._test_footer()
 
     def test_velocity_control(self):
         """Test Command 0x21 - Velocity Control"""
@@ -2216,79 +2225,31 @@ class SteadyWinRS485Tester:
 
     def test_return_home(self):
         """Test Command 0x24 - Return Home"""
-        if not self.connected:
-            print("✗ Not connected to motor.")
-            input("Press Enter to continue...")
+        if not self._require_connection():
             return
         
-        self.print_header()
-        print("=== Test Command 0x24 (Return Home) ===\n")
+        description = ("📝 Return Home Command:\n"
+                      "  • Returns motor to its home position\n"
+                      "  • No parameters required\n"
+                      "  • Home position is typically where encoder was calibrated")
         
-        print("📝 Return Home Command:")
-        print("  • Returns motor to its home position")
-        print("  • No parameters required")
-        print("  • Home position is typically where encoder was calibrated")
+        self._test_header(0x24, "Return Home", description)
         
         # Read current motor state first
-        print("\n🔍 Reading current motor state...")
-        current_response = self.motor.read_realtime_info()
-        if current_response and 'parsed_data' in current_response:
-            current_data = current_response['parsed_data']
-            print("✓ Current motor state:")
+        current_data = self._read_current_motor_state()
+        if current_data:
             print(f"  Current Position: {current_data['abs_angle_deg']:.2f}°")
             print(f"  Multi-turn Position: {current_data['multi_angle_deg']:.2f}°")
-            print(f"  Motor Speed: {current_data['speed_rpm']:.2f} RPM")
-            print(f"  Operating Status: {current_data['operating_status']}")
-            print(f"  Motor Status: 0x{current_data['motor_status']:02X}")
-        else:
-            print("⚠ Could not read current motor status")
         
-        # Confirmation
-        confirm = input(f"\nProceed with return home command? (y/n): ").strip().lower()
-        if confirm != 'y':
+        if not self._get_safety_confirmation("Proceed with return home command?"):
             print("Command cancelled.")
-            input("\nPress Enter to continue...")
+            self._test_footer()
             return
         
         print(f"\n🔧 Sending return home command...")
-        
         response = self.motor.return_home()
-        
-        if response:
-            print("✓ Return home command executed successfully!")
-            
-            if 'parsed_data' in response:
-                motor_data = response['parsed_data']
-                print(f"\n📊 Updated Motor State:")
-                print(f"  Position: {motor_data['abs_angle_deg']:.2f}°")
-                print(f"  Multi-turn Position: {motor_data['multi_angle_deg']:.2f}°")
-                print(f"  Motor Speed: {motor_data['speed_rpm']:.2f} RPM")
-                print(f"  Q-axis Current: {motor_data['current_a']:.3f} A")
-                print(f"  Operating Status: {motor_data['operating_status']}")
-                print(f"  Motor Status: 0x{motor_data['motor_status']:02X}")
-                print(f"  Fault Code: 0x{motor_data['fault_code']:02X}")
-                
-                if motor_data['fault_code'] == 0:
-                    print("✓ No faults detected")
-                else:
-                    print("⚠ Fault detected!")
-            
-            print(f"\nCommand Response Details:")
-            print(f"  Packet ID: 0x{response['packet_id']:02X}")
-            print(f"  Device Address: 0x{response['device_addr']:02X}")
-            print(f"  Command: 0x{response['command']:02X}")
-            print(f"  Payload Length: {len(response['payload'])} bytes")
-            
-            if response['payload']:
-                print(f"  Raw Payload: {response['payload'].hex(' ').upper()}")
-            else:
-                print("  No payload data received")
-                
-        else:
-            print("✗ Failed to execute return home command!")
-            print("  Device may not be responding or command not supported")
-        
-        input("\nPress Enter to continue...")
+        self._handle_command_response(response, "Return home command")
+        self._test_footer()
 
     def test_brake_control(self):
         """Test Command 0x2E - Brake Control"""
@@ -2388,78 +2349,30 @@ class SteadyWinRS485Tester:
 
     def test_disable_motor(self):
         """Test Command 0x2F - Disable Motor"""
-        if not self.connected:
-            print("✗ Not connected to motor.")
-            input("Press Enter to continue...")
+        if not self._require_connection():
             return
         
-        self.print_header()
-        print("=== Test Command 0x2F (Disable Motor) ===\n")
+        description = ("📝 Disable Motor Command:\n"
+                      "  • Disables motor operation\n"
+                      "  • Motor will stop and become inactive\n"
+                      "  • No parameters required")
         
-        print("📝 Disable Motor Command:")
-        print("  • Disables motor operation")
-        print("  • Motor will stop and become inactive")
-        print("  • No parameters required")
+        self._test_header(0x2F, "Disable Motor", description)
         
         # Read current motor state first
-        print("\n🔍 Reading current motor state...")
-        current_response = self.motor.read_realtime_info()
-        if current_response and 'parsed_data' in current_response:
-            current_data = current_response['parsed_data']
-            print("✓ Current motor state:")
-            print(f"  Motor Speed: {current_data['speed_rpm']:.2f} RPM")
-            print(f"  Q-axis Current: {current_data['current_a']:.3f} A")
-            print(f"  Operating Status: {current_data['operating_status']}")
-            print(f"  Motor Status: 0x{current_data['motor_status']:02X}")
-            print(f"  Fault Code: 0x{current_data['fault_code']:02X}")
-        else:
-            print("⚠ Could not read current motor status")
+        self._read_current_motor_state()
         
         # Confirmation
-        print(f"\n⚠ WARNING: This will disable the motor!")
-        confirm = input(f"\nProceed with motor disable? (y/n): ").strip().lower()
-        if confirm != 'y':
+        warning_msg = "⚠ WARNING: This will disable the motor!\nProceed with motor disable?"
+        if not self._get_safety_confirmation(warning_msg):
             print("Command cancelled.")
-            input("\nPress Enter to continue...")
+            self._test_footer()
             return
         
         print(f"\n🔧 Sending motor disable command...")
-        
         response = self.motor.disable_motor()
-        
-        if response:
-            print("✓ Motor disable command executed successfully!")
-            
-            if 'parsed_data' in response:
-                motor_data = response['parsed_data']
-                print(f"\n📊 Updated Motor State:")
-                print(f"  Motor Speed: {motor_data['speed_rpm']:.2f} RPM")
-                print(f"  Q-axis Current: {motor_data['current_a']:.3f} A")
-                print(f"  Operating Status: {motor_data['operating_status']}")
-                print(f"  Motor Status: 0x{motor_data['motor_status']:02X}")
-                print(f"  Fault Code: 0x{motor_data['fault_code']:02X}")
-                
-                if motor_data['fault_code'] == 0:
-                    print("✓ No faults detected")
-                else:
-                    print("⚠ Fault detected!")
-            
-            print(f"\nCommand Response Details:")
-            print(f"  Packet ID: 0x{response['packet_id']:02X}")
-            print(f"  Device Address: 0x{response['device_addr']:02X}")
-            print(f"  Command: 0x{response['command']:02X}")
-            print(f"  Payload Length: {len(response['payload'])} bytes")
-            
-            if response['payload']:
-                print(f"  Raw Payload: {response['payload'].hex(' ').upper()}")
-            else:
-                print("  No payload data received")
-                
-        else:
-            print("✗ Failed to execute motor disable command!")
-            print("  Device may not be responding or command not supported")
-        
-        input("\nPress Enter to continue...")
+        self._handle_command_response(response, "Motor disable command")
+        self._test_footer()
 
 
 def main():
