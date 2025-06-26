@@ -1378,6 +1378,137 @@ class SteadyWinRS485:
             self.logger.error("✗ Failed to perform factory reset")
             return None
 
+    def q_axis_current_control(self, target_current_ma, current_slope_ma_per_s=0):
+        """
+        Q-axis current control (Command 0x20)
+        
+        This command sets the target Q-axis current and current slope for motor control.
+        The motor will attempt to reach the target current using the specified slope.
+        The response contains the same real-time information as read_realtime_info().
+        
+        Args:
+            target_current_ma (int): Target Q-axis current in milliamps (mA)
+                                   Positive = one direction, negative = opposite direction
+                                   Force = target current × torque constant
+            current_slope_ma_per_s (int): Current slope in mA/s (default: 0 = maximum slope)
+                                        Controls how fast the current changes
+                                        0 means use maximum possible slope
+        
+        Returns:
+            dict: Response data containing real-time info, or None on error
+        """
+        # Validate inputs
+        if not isinstance(target_current_ma, int):
+            self.logger.error("Target current must be an integer (milliamps)")
+            return None
+            
+        if not isinstance(current_slope_ma_per_s, int) or current_slope_ma_per_s < 0:
+            self.logger.error("Current slope must be a non-negative integer")
+            return None
+        
+        # Build 8-byte payload
+        try:
+            payload = bytearray(8)
+            
+            # Target Q-axis current (4 bytes signed) - unit: 0.001A
+            # Convert mA to the protocol unit (0.001A = 1mA)
+            target_current_protocol = target_current_ma
+            payload[0:4] = struct.pack('<i', target_current_protocol)
+            
+            # Q-axis current slope (4 bytes unsigned) - unit: 0.001A/s
+            # Convert mA/s to the protocol unit (0.001A/s = 1mA/s)  
+            current_slope_protocol = current_slope_ma_per_s
+            payload[4:8] = struct.pack('<I', current_slope_protocol)
+            
+        except Exception as e:
+            self.logger.error(f"Error building Q-axis current control payload: {e}")
+            return None
+        
+        self.logger.info(f"Setting Q-axis current: {target_current_ma}mA, slope: {current_slope_ma_per_s}mA/s")
+        
+        response = self.send_command(0x20, bytes(payload), expect_response=True)
+        
+        if response:
+            self.logger.info("✓ Q-axis current control command executed successfully")
+            
+            # Parse the response using the same logic as read_realtime_info
+            parsed_data = self._parse_realtime_data(response['payload'])
+            if parsed_data:
+                # Return both raw response and parsed data
+                response['parsed_data'] = parsed_data
+                return response
+            else:
+                self.logger.error("✗ Failed to parse Q-axis current control response")
+                return response  # Return raw response even if parsing fails
+        else:
+            self.logger.error("✗ Failed to execute Q-axis current control command")
+            return None
+
+    def velocity_control(self, target_speed_rpm, acceleration_rpm_per_s=0):
+        """
+        Velocity control (Command 0x21)
+        
+        This command sets the target motor speed and acceleration for velocity control.
+        The motor will attempt to reach the target speed using the specified acceleration.
+        The response contains the same real-time information as read_realtime_info().
+        
+        Args:
+            target_speed_rpm (float): Target motor speed in RPM
+                                    Positive = forward direction, negative = reverse direction
+            acceleration_rpm_per_s (float): Acceleration in RPM/s (default: 0 = maximum acceleration)
+                                          Controls how fast the speed changes
+                                          0 means use maximum possible acceleration
+        
+        Returns:
+            dict: Response data containing real-time info, or None on error
+        """
+        # Validate inputs
+        if not isinstance(target_speed_rpm, (int, float)):
+            self.logger.error("Target speed must be a number (RPM)")
+            return None
+            
+        if not isinstance(acceleration_rpm_per_s, (int, float)) or acceleration_rpm_per_s < 0:
+            self.logger.error("Acceleration must be a non-negative number")
+            return None
+        
+        # Build 8-byte payload
+        try:
+            payload = bytearray(8)
+            
+            # Target speed (4 bytes signed) - unit: 0.01 RPM
+            # Convert RPM to the protocol unit (0.01 RPM)
+            target_speed_protocol = int(round(target_speed_rpm * 100))
+            payload[0:4] = struct.pack('<i', target_speed_protocol)
+            
+            # Acceleration (4 bytes unsigned) - unit: 0.01 RPM/s
+            # Convert RPM/s to the protocol unit (0.01 RPM/s)
+            acceleration_protocol = int(round(acceleration_rpm_per_s * 100))
+            payload[4:8] = struct.pack('<I', acceleration_protocol)
+            
+        except Exception as e:
+            self.logger.error(f"Error building velocity control payload: {e}")
+            return None
+        
+        self.logger.info(f"Setting target speed: {target_speed_rpm:.2f} RPM, acceleration: {acceleration_rpm_per_s:.2f} RPM/s")
+        
+        response = self.send_command(0x21, bytes(payload), expect_response=True)
+        
+        if response:
+            self.logger.info("✓ Velocity control command executed successfully")
+            
+            # Parse the response using the same logic as read_realtime_info
+            parsed_data = self._parse_realtime_data(response['payload'])
+            if parsed_data:
+                # Return both raw response and parsed data
+                response['parsed_data'] = parsed_data
+                return response
+            else:
+                self.logger.error("✗ Failed to parse velocity control response")
+                return response  # Return raw response even if parsing fails
+        else:
+            self.logger.error("✗ Failed to execute velocity control command")
+            return None
+
 
 def setup_logging(level=logging.INFO):
     """Setup logging configuration"""

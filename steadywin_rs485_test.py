@@ -1180,13 +1180,15 @@ class SteadyWinRS485Tester:
         print("9. Test Command 0x16 (Write and Save Control Parameters)")
         print("10. Test Command 0x1D (Set Zero Position)")
         print("11. Test Command 0x1E (Calibrate Encoder)")
-        print("12. Test Manual Packet")
-        print("13. Reset Connection")
-        print("14. Enable/Disable Debug Logging")
-        print("15. Test Command 0x1F (Factory Reset)")
-        print("16. Exit")
+        print("12. Test Command 0x20 (Q-axis Current Control)")
+        print("13. Test Command 0x21 (Velocity Control)")
+        print("14. Test Manual Packet")
+        print("15. Reset Connection")
+        print("16. Enable/Disable Debug Logging")
+        print("17. Test Command 0x1F (Factory Reset)")
+        print("18. Exit")
         print()
-        choice = self.get_user_input("Select option (1-16)", int)
+        choice = self.get_user_input("Select option (1-18)", int)
         return choice
     
     def run(self):
@@ -1236,17 +1238,21 @@ class SteadyWinRS485Tester:
                 elif choice == 11:
                     self.test_calibrate_encoder()
                 elif choice == 12:
-                    self.test_manual_packet()
+                    self.test_q_axis_current_control()
                 elif choice == 13:
-                    self.reset_connection()
+                    self.test_velocity_control()
                 elif choice == 14:
-                    self.toggle_debug_logging()
+                    self.test_manual_packet()
                 elif choice == 15:
-                    self.test_factory_reset()
+                    self.reset_connection()
                 elif choice == 16:
+                    self.toggle_debug_logging()
+                elif choice == 17:
+                    self.test_factory_reset()
+                elif choice == 18:
                     break
                 else:
-                    print("Invalid choice. Please select 1-16.")
+                    print("Invalid choice. Please select 1-18.")
                     input("Press Enter to continue...")
         
         except KeyboardInterrupt:
@@ -1759,6 +1765,212 @@ class SteadyWinRS485Tester:
                 
         else:
             print("✗ Failed to perform factory reset!")
+            print("  Device may not be responding or command not supported")
+        
+        input("\nPress Enter to continue...")
+
+    def test_q_axis_current_control(self):
+        """Test Command 0x20 - Q-axis Current Control"""
+        if not self.connected:
+            print("✗ Not connected to motor.")
+            input("Press Enter to continue...")
+            return
+        
+        self.print_header()
+        print("=== Test Command 0x20 (Q-axis Current Control) ===\n")
+        
+        print("📝 Q-axis Current Control Parameters:")
+        print("  • Target Current: Sets the desired Q-axis current")
+        print("  • Current Slope: Controls how fast current changes (0 = maximum slope)")
+        print("  • Force = Target Current × Torque Constant")
+        print("  • Positive current = one direction, negative = opposite direction")
+        
+        # Read current motor state first
+        print("\n🔍 Reading current motor state...")
+        current_response = self.motor.read_realtime_info()
+        if current_response and 'parsed_data' in current_response:
+            current_data = current_response['parsed_data']
+            print("✓ Current motor state:")
+            print(f"  Current Q-axis Current: {current_data['current_a']:.3f} A ({current_data['current_raw']} mA)")
+            print(f"  Motor Speed: {current_data['speed_rpm']:.2f} RPM")
+            print(f"  Operating Status: {current_data['operating_status']}")
+            print(f"  Motor Status: 0x{current_data['motor_status']:02X}")
+            print(f"  Fault Code: 0x{current_data['fault_code']:02X}")
+        else:
+            print("⚠ Could not read current motor status")
+        
+        # Get target current from user
+        print(f"\n📊 Set Q-axis Current Control Parameters:")
+        target_current_ma = self.get_user_input("Enter target Q-axis current (mA, positive/negative)", int, 0)
+        
+        print(f"\nCurrent slope options:")
+        print(f"  0 = Maximum slope (fastest change)")
+        print(f"  >0 = Specific slope in mA/s (controlled change rate)")
+        current_slope_ma_per_s = self.get_user_input("Enter current slope (mA/s, 0 for max)", int, 0)
+        
+        # Show summary
+        print(f"\n📋 Command Summary:")
+        print(f"  Target Q-axis Current: {target_current_ma} mA ({target_current_ma/1000:.3f} A)")
+        print(f"  Current Slope: {current_slope_ma_per_s} mA/s {'(Maximum)' if current_slope_ma_per_s == 0 else ''}")
+        
+        # Safety confirmation for high currents
+        if abs(target_current_ma) > 5000:  # > 5A
+            print(f"\n⚠ WARNING: High current requested ({target_current_ma/1000:.1f}A)")
+            print(f"  Ensure motor can handle this current safely!")
+            confirm = input("\nProceed with high current command? (yes/no): ").strip().lower()
+            if confirm != 'yes':
+                print("Command cancelled.")
+                input("\nPress Enter to continue...")
+                return
+        elif abs(target_current_ma) > 0:
+            confirm = input(f"\nProceed with Q-axis current control? (y/n): ").strip().lower()
+            if confirm != 'y':
+                print("Command cancelled.")
+                input("\nPress Enter to continue...")
+                return
+        
+        print(f"\n🔧 Sending Q-axis current control command...")
+        
+        response = self.motor.q_axis_current_control(target_current_ma, current_slope_ma_per_s)
+        
+        if response:
+            print("✓ Q-axis current control command executed successfully!")
+            
+            if 'parsed_data' in response:
+                motor_data = response['parsed_data']
+                print(f"\n📊 Updated Motor State:")
+                print(f"  Q-axis Current: {motor_data['current_a']:.3f} A ({motor_data['current_raw']} mA)")
+                print(f"  Motor Speed: {motor_data['speed_rpm']:.2f} RPM")
+                print(f"  Absolute Angle: {motor_data['abs_angle_deg']:.2f}°")
+                print(f"  Multi-turn Angle: {motor_data['multi_angle_deg']:.2f}°")
+                print(f"  Bus Voltage: {motor_data['voltage_v']:.2f} V")
+                print(f"  Bus Current: {motor_data['bus_current_a']:.2f} A")
+                print(f"  Temperature: {motor_data['work_temp_c']}°C")
+                print(f"  Operating Status: {motor_data['operating_status']}")
+                print(f"  Motor Status: 0x{motor_data['motor_status']:02X}")
+                print(f"  Fault Code: 0x{motor_data['fault_code']:02X}")
+                
+                if motor_data['fault_code'] == 0:
+                    print("✓ No faults detected")
+                else:
+                    print("⚠ Fault detected!")
+            
+            print(f"\nCommand Response Details:")
+            print(f"  Packet ID: 0x{response['packet_id']:02X}")
+            print(f"  Device Address: 0x{response['device_addr']:02X}")
+            print(f"  Command: 0x{response['command']:02X}")
+            print(f"  Payload Length: {len(response['payload'])} bytes")
+            
+            if response['payload']:
+                print(f"  Raw Payload: {response['payload'].hex(' ').upper()}")
+            else:
+                print("  No payload data received")
+                
+        else:
+            print("✗ Failed to execute Q-axis current control command!")
+            print("  Device may not be responding or command not supported")
+        
+        input("\nPress Enter to continue...")
+
+    def test_velocity_control(self):
+        """Test Command 0x21 - Velocity Control"""
+        if not self.connected:
+            print("✗ Not connected to motor.")
+            input("Press Enter to continue...")
+            return
+        
+        self.print_header()
+        print("=== Test Command 0x21 (Velocity Control) ===\n")
+        
+        print("📝 Velocity Control Parameters:")
+        print("  • Target Speed: Sets the desired motor speed in RPM")
+        print("  • Acceleration: Controls how fast speed changes (0 = maximum acceleration)")
+        print("  • Positive speed = forward direction, negative = reverse direction")
+        print("  • Speed unit: RPM, Acceleration unit: RPM/s")
+        
+        # Read current motor state first
+        print("\n🔍 Reading current motor state...")
+        current_response = self.motor.read_realtime_info()
+        if current_response and 'parsed_data' in current_response:
+            current_data = current_response['parsed_data']
+            print("✓ Current motor state:")
+            print(f"  Current Speed: {current_data['speed_rpm']:.2f} RPM")
+            print(f"  Q-axis Current: {current_data['current_a']:.3f} A")
+            print(f"  Operating Status: {current_data['operating_status']}")
+            print(f"  Motor Status: 0x{current_data['motor_status']:02X}")
+            print(f"  Fault Code: 0x{current_data['fault_code']:02X}")
+        else:
+            print("⚠ Could not read current motor status")
+        
+        # Get target speed from user
+        print(f"\n📊 Set Velocity Control Parameters:")
+        target_speed_rpm = self.get_user_input("Enter target speed (RPM, positive/negative)", float, 0.0)
+        
+        print(f"\nAcceleration options:")
+        print(f"  0 = Maximum acceleration (fastest change)")
+        print(f"  >0 = Specific acceleration in RPM/s (controlled speed change)")
+        acceleration_rpm_per_s = self.get_user_input("Enter acceleration (RPM/s, 0 for max)", float, 0.0)
+        
+        # Show summary
+        print(f"\n📋 Command Summary:")
+        print(f"  Target Speed: {target_speed_rpm:.2f} RPM {'(Forward)' if target_speed_rpm >= 0 else '(Reverse)'}")
+        print(f"  Acceleration: {acceleration_rpm_per_s:.2f} RPM/s {'(Maximum)' if acceleration_rpm_per_s == 0 else ''}")
+        
+        # Safety confirmation for high speeds
+        if abs(target_speed_rpm) > 1000:  # > 1000 RPM
+            print(f"\n⚠ WARNING: High speed requested ({target_speed_rpm:.1f} RPM)")
+            print(f"  Ensure motor and load can handle this speed safely!")
+            confirm = input("\nProceed with high speed command? (yes/no): ").strip().lower()
+            if confirm != 'yes':
+                print("Command cancelled.")
+                input("\nPress Enter to continue...")
+                return
+        elif abs(target_speed_rpm) > 0:
+            confirm = input(f"\nProceed with velocity control? (y/n): ").strip().lower()
+            if confirm != 'y':
+                print("Command cancelled.")
+                input("\nPress Enter to continue...")
+                return
+        
+        print(f"\n🔧 Sending velocity control command...")
+        
+        response = self.motor.velocity_control(target_speed_rpm, acceleration_rpm_per_s)
+        
+        if response:
+            print("✓ Velocity control command executed successfully!")
+            
+            if 'parsed_data' in response:
+                motor_data = response['parsed_data']
+                print(f"\n📊 Updated Motor State:")
+                print(f"  Motor Speed: {motor_data['speed_rpm']:.2f} RPM")
+                print(f"  Q-axis Current: {motor_data['current_a']:.3f} A")
+                print(f"  Absolute Angle: {motor_data['abs_angle_deg']:.2f}°")
+                print(f"  Multi-turn Angle: {motor_data['multi_angle_deg']:.2f}°")
+                print(f"  Bus Voltage: {motor_data['voltage_v']:.2f} V")
+                print(f"  Bus Current: {motor_data['bus_current_a']:.2f} A")
+                print(f"  Temperature: {motor_data['work_temp_c']}°C")
+                print(f"  Operating Status: {motor_data['operating_status']}")
+                print(f"  Motor Status: 0x{motor_data['motor_status']:02X}")
+                print(f"  Fault Code: 0x{motor_data['fault_code']:02X}")
+                
+                if motor_data['fault_code'] == 0:
+                    print("✓ No faults detected")
+                else:
+                    print("⚠ Fault detected!")
+            
+            print(f"\nCommand Response Details:")
+            print(f"  Packet ID: 0x{response['packet_id']:02X}")
+            print(f"  Device Address: 0x{response['device_addr']:02X}")
+            print(f"  Command: 0x{response['command']:02X}")
+            print(f"  Payload Length: {len(response['payload'])} bytes")
+            
+            if response['payload']:
+                print(f"  Raw Payload: {response['payload'].hex(' ').upper()}")
+            else:
+                print("  No payload data received")
+                
+        else:
+            print("✗ Failed to execute velocity control command!")
             print("  Device may not be responding or command not supported")
         
         input("\nPress Enter to continue...")
