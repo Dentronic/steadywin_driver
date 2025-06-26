@@ -1252,6 +1252,132 @@ class SteadyWinRS485:
             self.logger.error("✗ Failed to set zero position")
             return None
 
+    def calibrate_encoder(self, timeout_seconds=90, poll_interval=1.0, monitor_progress=True):
+        """
+        Calibrate encoder (Command 0x1E)
+        
+        This command performs encoder calibration. The calibration process may cause
+        the motor to rotate and typically transitions the motor to voltage control mode.
+        The function monitors motor status to detect when calibration is complete.
+        
+        ⚠ WARNING: Motor may rotate during calibration. Ensure the motor shaft can
+        rotate freely and is in a safe mechanical position before performing calibration.
+        
+        Args:
+            timeout_seconds (float): Maximum time to wait for calibration completion (default: 90)
+            poll_interval (float): Time between status checks in seconds (default: 1.0)
+            monitor_progress (bool): Whether to monitor and wait for calibration completion (default: True)
+        
+        Returns:
+            dict: Response data from motor with calibration details, or None on error
+        """
+        import time
+        
+        self.logger.info("Starting encoder calibration")
+        
+        # Send the calibration command
+        response = self.send_command(0x1E, b'', expect_response=True)
+        
+        if not response:
+            self.logger.error("✗ Failed to send encoder calibration command")
+            return None
+        
+        self.logger.info("✓ Encoder calibration command sent successfully")
+        
+        if not monitor_progress:
+            # Return immediately without monitoring
+            return response
+        
+        # Monitor calibration progress by checking motor status
+        self.logger.info("📊 Monitoring calibration progress...")
+        start_time = time.time()
+        calibration_started = False
+        
+        while True:
+            elapsed = time.time() - start_time
+            
+            # Check timeout
+            if elapsed > timeout_seconds:
+                self.logger.error(f"✗ Calibration timeout after {elapsed:.1f} seconds")
+                response['calibration_timeout'] = True
+                response['calibration_duration'] = elapsed
+                return response
+            
+            # Read current motor status
+            status_response = self.read_realtime_info()
+            if not status_response or 'parsed_data' not in status_response:
+                self.logger.warning("⚠ Could not read motor status during calibration")
+                time.sleep(poll_interval)
+                continue
+            
+            motor_data = status_response['parsed_data']
+            motor_status = motor_data['motor_status']
+            operating_status = motor_data['operating_status']
+            
+            # Check if calibration is in progress (motor_status = 0x01, operating_status = 1)
+            if motor_status == 0x01 and operating_status == 1:
+                if not calibration_started:
+                    calibration_started = True
+                    self.logger.info("🔧 Calibration in progress (Motor Status: 0x01, Voltage Control)")
+                else:
+                    self.logger.debug(f"📊 Calibration ongoing... ({elapsed:.1f}s elapsed)")
+            
+            # Check if calibration completed (motor status changed from 0x01 OR operating status changed from 1)
+            elif calibration_started and (motor_status != 0x01 or operating_status != 1):
+                calibration_duration = time.time() - start_time
+                self.logger.info(f"✓ Encoder calibration completed successfully ({calibration_duration:.1f}s)")
+                self.logger.info(f"📊 Final motor status: 0x{motor_status:02X}, Operating status: {operating_status}")
+                
+                # Add calibration details to response
+                response['calibration_completed'] = True
+                response['calibration_duration'] = calibration_duration
+                response['final_motor_status'] = motor_status
+                response['final_operating_status'] = operating_status
+                return response
+            
+            # Handle case where calibration might be very long - provide periodic feedback
+            elif calibration_started and elapsed > 30 and int(elapsed) % 10 == 0:
+                self.logger.info(f"📊 Calibration still in progress... ({elapsed:.0f}s elapsed, Status: 0x{motor_status:02X})")
+            
+            # Also check if motor hasn't started calibration after 10 seconds
+            elif not calibration_started and elapsed > 10:
+                self.logger.warning(f"⚠ Calibration may not have started - motor status: 0x{motor_status:02X}, operating status: {operating_status}")
+                # Don't return here, continue monitoring
+            
+            # Wait before next check
+            time.sleep(poll_interval)
+        
+        # Should never reach here due to timeout check, but just in case
+        return response
+
+    def factory_reset(self):
+        """
+        Factory reset - Restore parameters to default values (Command 0x1F)
+        
+        This command restores most motor parameters to their factory default values.
+        
+        ⚠ WARNING: This will reset user parameters and control parameters to defaults!
+        
+        Note: The following parameters are NOT changed by factory reset:
+        - Device address
+        - Encoder calibration parameters
+        - Motor hardware parameters
+        
+        Returns:
+            dict: Response data from motor, or None on error
+        """
+        self.logger.info("Performing factory reset - restoring parameters to default values")
+        
+        response = self.send_command(0x1F, b'', expect_response=True)
+        
+        if response:
+            self.logger.info("✓ Factory reset completed successfully")
+            self.logger.warning("⚠ All parameters have been reset to factory defaults")
+            return response
+        else:
+            self.logger.error("✗ Failed to perform factory reset")
+            return None
+
 
 def setup_logging(level=logging.INFO):
     """Setup logging configuration"""

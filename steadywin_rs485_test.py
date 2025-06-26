@@ -1179,12 +1179,14 @@ class SteadyWinRS485Tester:
         print("8. Test Command 0x15 (Write Control Parameters)")
         print("9. Test Command 0x16 (Write and Save Control Parameters)")
         print("10. Test Command 0x1D (Set Zero Position)")
-        print("11. Test Manual Packet")
-        print("12. Reset Connection")
-        print("13. Enable/Disable Debug Logging")
-        print("14. Exit")
+        print("11. Test Command 0x1E (Calibrate Encoder)")
+        print("12. Test Manual Packet")
+        print("13. Reset Connection")
+        print("14. Enable/Disable Debug Logging")
+        print("15. Test Command 0x1F (Factory Reset)")
+        print("16. Exit")
         print()
-        choice = self.get_user_input("Select option (1-14)", int)
+        choice = self.get_user_input("Select option (1-16)", int)
         return choice
     
     def run(self):
@@ -1232,15 +1234,19 @@ class SteadyWinRS485Tester:
                 elif choice == 10:
                     self.test_set_zero_position()
                 elif choice == 11:
-                    self.test_manual_packet()
+                    self.test_calibrate_encoder()
                 elif choice == 12:
-                    self.reset_connection()
+                    self.test_manual_packet()
                 elif choice == 13:
-                    self.toggle_debug_logging()
+                    self.reset_connection()
                 elif choice == 14:
+                    self.toggle_debug_logging()
+                elif choice == 15:
+                    self.test_factory_reset()
+                elif choice == 16:
                     break
                 else:
-                    print("Invalid choice. Please select 1-14.")
+                    print("Invalid choice. Please select 1-16.")
                     input("Press Enter to continue...")
         
         except KeyboardInterrupt:
@@ -1535,6 +1541,224 @@ class SteadyWinRS485Tester:
                 
         else:
             print("✗ Failed to set zero position!")
+            print("  Device may not be responding or command not supported")
+        
+        input("\nPress Enter to continue...")
+
+    def test_calibrate_encoder(self):
+        """Test Command 0x1E - Calibrate Encoder"""
+        if not self.connected:
+            print("✗ Not connected to motor.")
+            input("Press Enter to continue...")
+            return
+        
+        self.print_header()
+        print("=== Test Command 0x1E (Calibrate Encoder) ===\n")
+        
+        print("This command performs encoder calibration.")
+        print("⚠ Ensure the motor is in a safe state and can rotate freely.")
+        
+        # Read current system state first
+        print("\n📖 Reading current motor status...")
+        realtime_response = self.motor.read_realtime_info()
+        
+        if realtime_response and 'parsed_data' in realtime_response:
+            current_data = realtime_response['parsed_data']
+            print(f"✓ Current motor status:")
+            print(f"  Absolute Angle: {current_data['abs_angle_deg']:.2f}°")
+            print(f"  Multi-turn Angle: {current_data['multi_angle_deg']:.2f}°")
+            print(f"  Motor Speed: {current_data['speed_rpm']:.2f} RPM")
+            print(f"  Operating Status: {current_data['operating_status']} (0=Shutdown, 1=Voltage, 2=Current, 3=Speed, 4=Position)")
+            print(f"  Motor Status: 0x{current_data['motor_status']:02X}")
+            print(f"  Fault Code: 0x{current_data['fault_code']:02X}")
+        else:
+            print("⚠ Could not read current motor status")
+        
+        # Single confirmation
+        confirm = input("\nProceed with encoder calibration? (y/n): ").strip().lower()
+        if confirm != 'y':
+            print("Calibration cancelled.")
+            input("\nPress Enter to continue...")
+            return
+        
+        print("\n🔧 Starting encoder calibration...")
+        print("Note: Motor may rotate during calibration process...")
+        print("📊 Monitoring calibration progress (this may take 60+ seconds)...")
+        
+        response = self.motor.calibrate_encoder(timeout_seconds=90, poll_interval=1.0)
+        
+        if response:
+            print("✓ Encoder calibration process completed!")
+            print(f"\nCalibration Details:")
+            
+            if 'calibration_duration' in response:
+                duration = response['calibration_duration']
+                print(f"  Duration: {duration:.1f} seconds")
+            
+            if 'calibration_timeout' in response and response['calibration_timeout']:
+                print("  ⚠ Calibration timed out!")
+            elif 'calibration_completed' in response and response['calibration_completed']:
+                print("  ✓ Calibration completed successfully")
+                if 'final_motor_status' in response:
+                    print(f"  Final Motor Status: 0x{response['final_motor_status']:02X}")
+                if 'final_operating_status' in response:
+                    print(f"  Final Operating Status: {response['final_operating_status']}")
+            
+            print(f"\nCommand Response Details:")
+            print(f"  Packet ID: 0x{response['packet_id']:02X}")
+            print(f"  Device Address: 0x{response['device_addr']:02X}")
+            print(f"  Command: 0x{response['command']:02X}")
+            print(f"  Payload Length: {len(response['payload'])} bytes")
+            
+            if response['payload']:
+                print(f"  Raw Payload: {response['payload'].hex(' ').upper()}")
+            else:
+                print("  No payload data received")
+            
+            # Read final status
+            print("\n🔍 Reading final motor status...")
+            import time
+            time.sleep(0.2)
+            verify_response = self.motor.read_realtime_info()
+            
+            if verify_response and 'parsed_data' in verify_response:
+                verify_data = verify_response['parsed_data']
+                print("✓ Final motor status:")
+                print(f"  Absolute Angle: {verify_data['abs_angle_deg']:.2f}°")
+                print(f"  Multi-turn Angle: {verify_data['multi_angle_deg']:.2f}°")
+                print(f"  Motor Speed: {verify_data['speed_rpm']:.2f} RPM")
+                print(f"  Operating Status: {verify_data['operating_status']}")
+                print(f"  Motor Status: 0x{verify_data['motor_status']:02X}")
+                print(f"  Fault Code: 0x{verify_data['fault_code']:02X}")
+                
+                if verify_data['fault_code'] == 0:
+                    print("✓ No faults detected")
+                else:
+                    print("⚠ Fault detected after calibration!")
+            else:
+                print("⚠ Could not read final motor status")
+                
+        else:
+            print("✗ Failed to perform encoder calibration!")
+            print("  Device may not be responding or calibration command failed")
+        
+        input("\nPress Enter to continue...")
+
+    def test_factory_reset(self):
+        """Test Command 0x1F - Factory Reset"""
+        if not self.connected:
+            print("✗ Not connected to motor.")
+            input("Press Enter to continue...")
+            return
+        
+        self.print_header()
+        print("=== Test Command 0x1F (Factory Reset) ===\n")
+        
+        print("🔴 DANGER: This command will restore most motor parameters to factory defaults!")
+        print("⚠ Most custom settings will be permanently lost, including:")
+        print("  • User parameters (speeds, acceleration, etc.)")
+        print("  • Control parameters (PID settings, output limits)")
+        print("  • Other configurable settings")
+        print("\n✓ The following parameters will NOT be changed:")
+        print("  • Device address")
+        print("  • Encoder calibration parameters")
+        print("  • Motor hardware parameters")
+        
+        # Read current parameters to show what will be lost
+        print("\n📖 Reading current motor configuration...")
+        
+        # Read user parameters
+        user_response = self.motor.read_user_parameters()
+        if user_response and 'parsed_data' in user_response:
+            user_data = user_response['parsed_data']
+            print(f"✓ Current user parameters:")
+            print(f"  Encoder Model: {user_data['encoder_model']}")
+            print(f"  Device Address: 0x{user_data['device_address']:02X}")
+            print(f"  RS485 Baud Rate: {user_data['rs485_baud']}")
+            print(f"  CAN Protocol: {user_data['canopen_protocol']}")
+        else:
+            print("⚠ Could not read current user parameters")
+        
+        # Read control parameters
+        control_response = self.motor.read_control_parameters()
+        if control_response and 'parsed_data' in control_response:
+            control_data = control_response['parsed_data']
+            print(f"✓ Current control parameters:")
+            print(f"  Position Kp: {control_data['position_kp']}")
+            print(f"  Speed Kp: {control_data['speed_kp']}")
+        else:
+            print("⚠ Could not read current control parameters")
+        
+        # Multiple confirmations for safety
+        print(f"\n🚨 FACTORY RESET CONFIRMATION:")
+        print(f"  This action CANNOT be undone!")
+        print(f"  You will need to reconfigure most settings after reset")
+        print(f"  (Device address, encoder calibration, and hardware params preserved)")
+        
+        confirm1 = input("\nDo you understand that most settings will be lost? (yes/no): ").strip().lower()
+        if confirm1 != 'yes':
+            print("Operation cancelled.")
+            input("\nPress Enter to continue...")
+            return
+        
+        confirm2 = input("\nAre you absolutely sure you want to factory reset? (YES/no): ").strip()
+        if confirm2 != 'YES':
+            print("Operation cancelled.")
+            input("\nPress Enter to continue...")
+            return
+        
+        # Final confirmation
+        print(f"\n⚠ FINAL WARNING:")
+        print(f"  This will permanently reset most motor parameters to factory defaults")
+        print(f"  Type 'RESET' to proceed or anything else to cancel")
+        
+        final_confirm = input("\nType 'RESET' to confirm: ").strip()
+        if final_confirm != 'RESET':
+            print("Factory reset cancelled.")
+            input("\nPress Enter to continue...")
+            return
+        
+        print("\n🔧 Performing factory reset...")
+        print("⚠ Do not power off the motor during this operation!")
+        
+        response = self.motor.factory_reset()
+        
+        if response:
+            print("✓ Factory reset completed successfully!")
+            print(f"\nResponse Details:")
+            print(f"  Packet ID: 0x{response['packet_id']:02X}")
+            print(f"  Device Address: 0x{response['device_addr']:02X}")
+            print(f"  Command: 0x{response['command']:02X}")
+            print(f"  Payload Length: {len(response['payload'])} bytes")
+            
+            if response['payload']:
+                print(f"  Raw Payload: {response['payload'].hex(' ').upper()}")
+            else:
+                print("  No payload data received")
+            
+            print(f"\n🔄 Motor has been reset to factory defaults!")
+            print(f"📝 You will need to reconfigure user and control parameters for your application")
+            print(f"✓ Device address, encoder calibration, and hardware params are preserved")
+            
+            # Read status after reset to verify
+            print("\n🔍 Verifying factory reset...")
+            import time
+            time.sleep(1.0)  # Give time for reset to complete
+            
+            # Try to read user parameters to see defaults
+            verify_response = self.motor.read_user_parameters()
+            if verify_response and 'parsed_data' in verify_response:
+                verify_data = verify_response['parsed_data']
+                print("✓ Factory default user parameters:")
+                print(f"  Encoder Model: {verify_data['encoder_model']}")
+                print(f"  Device Address: 0x{verify_data['device_address']:02X}")
+                print(f"  RS485 Baud Rate: {verify_data['rs485_baud']}")
+                print(f"  CAN Protocol: {verify_data['canopen_protocol']}")
+            else:
+                print("⚠ Could not read parameters after reset")
+                
+        else:
+            print("✗ Failed to perform factory reset!")
             print("  Device may not be responding or command not supported")
         
         input("\nPress Enter to continue...")
