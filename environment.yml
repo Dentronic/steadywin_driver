@@ -1,0 +1,9 @@
+name: steadywin-bldc
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - pyserial
+      - crcmod 
