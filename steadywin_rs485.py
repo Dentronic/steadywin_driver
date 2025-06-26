@@ -202,10 +202,7 @@ class SteadyWinRS485:
             if not expect_response:
                 return True
             
-            # Wait for response
-            time.sleep(0.01)  # Small delay for response
-            
-            # Read response with timeout
+            # Read response with timeout (no delay needed - timeout handles timing)
             response_data = self.serial_conn.read(1024)  # Read up to 1KB
             
             if not response_data:
@@ -220,6 +217,106 @@ class SteadyWinRS485:
         except Exception as e:
             self.logger.error(f"Error sending command 0x{command:02X}: {e}")
             return None
+
+    def _send_control_command(self, command, payload, operation_description):
+        """
+        Helper method for control commands that return realtime data
+        
+        Args:
+            command (int): Command code
+            payload (bytes): Command payload
+            operation_description (str): Description for logging
+            
+        Returns:
+            dict: Response with parsed_data, or None on error
+        """
+        response = self.send_command(command, payload, expect_response=True)
+        
+        if response:
+            # Parse the response using realtime data parser
+            parsed_data = self._parse_realtime_data(response['payload'])
+            if parsed_data:
+                response['parsed_data'] = parsed_data
+            return response
+        else:
+            self.logger.error(f"✗ Failed to execute {operation_description}")
+            return None
+
+    def _send_simple_command(self, command, operation_description, expect_response=True):
+        """
+        Helper method for simple commands with no payload
+        
+        Args:
+            command (int): Command code
+            operation_description (str): Description for logging
+            expect_response (bool): Whether to expect a response
+            
+        Returns:
+            dict/bool: Response data or success boolean, None on error
+        """
+        response = self.send_command(command, b'', expect_response=expect_response)
+        
+        if response is None:
+            self.logger.error(f"✗ Failed to execute {operation_description}")
+            return None
+        elif expect_response and isinstance(response, dict):
+            # Try to parse realtime data if payload is long enough
+            if len(response['payload']) >= 22:
+                parsed_data = self._parse_realtime_data(response['payload'])
+                if parsed_data:
+                    response['parsed_data'] = parsed_data
+            return response
+        else:
+            return response
+
+    def _send_parameter_read_command(self, command, operation_description, parser_func):
+        """
+        Helper method for parameter reading commands that need custom parsing
+        
+        Args:
+            command (int): Command code
+            operation_description (str): Description for logging
+            parser_func: Function to parse the response payload
+            
+        Returns:
+            dict: Response with parsed_data, or None on error
+        """
+        response = self.send_command(command, b'', expect_response=True)
+        
+        if response:
+            # Parse the payload data using the provided parser
+            parsed_data = parser_func(response['payload'])
+            if parsed_data:
+                response['parsed_data'] = parsed_data
+            return response
+        else:
+            self.logger.error(f"✗ Failed to {operation_description}")
+            return None
+
+    def _send_parameter_write_command(self, command, payload, operation_description, parser_func):
+        """
+        Helper method for parameter writing commands that need custom parsing
+        
+        Args:
+            command (int): Command code
+            payload (bytes): Command payload
+            operation_description (str): Description for logging
+            parser_func: Function to parse the response payload
+            
+        Returns:
+            dict: Response with parsed_data, or None on error
+        """
+        response = self.send_command(command, payload, expect_response=True)
+        
+        if response:
+            # Parse the response using the provided parser
+            parsed_data = parser_func(response['payload'])
+            if parsed_data:
+                response['parsed_data'] = parsed_data
+            return response
+        else:
+            self.logger.error(f"✗ Failed to {operation_description}")
+            return None
     
     def restart_slave(self):
         """
@@ -233,16 +330,8 @@ class SteadyWinRS485:
             bool: True if command sent successfully, False otherwise
         """
         self.logger.info("Restarting slave device")
-        
-        # Command 0x00 doesn't expect a response
-        result = self.send_command(0x00, b'', expect_response=False)
-        
-        if result:
-            self.logger.info("✓ Slave restart command sent")
-            return True
-        else:
-            self.logger.error("✗ Failed to send slave restart command")
-            return False
+        result = self._send_simple_command(0x00, "slave restart", expect_response=False)
+        return result is not None
     
     def read_system_info(self):
         """
@@ -255,16 +344,7 @@ class SteadyWinRS485:
         Returns:
             dict: Response data containing system info, or None on error
         """
-        self.logger.info("Reading system information")
-        
-        response = self.send_command(0x0A, b'', expect_response=True)
-        
-        if response:
-            self.logger.info("✓ System information read successfully")
-            return response
-        else:
-            self.logger.error("✗ Failed to read system information")
-            return None
+        return self._send_simple_command(0x0A, "read system information")
     
     def _parse_realtime_data(self, payload):
         """
@@ -382,25 +462,7 @@ class SteadyWinRS485:
         Returns:
             dict: Response data containing real-time info, or None on error
         """
-        self.logger.info("Reading real-time information")
-        
-        response = self.send_command(0x0B, b'', expect_response=True)
-        
-        if response:
-            self.logger.info("✓ Real-time information read successfully")
-            
-            # Parse the payload data
-            parsed_data = self._parse_realtime_data(response['payload'])
-            if parsed_data:
-                # Return both raw response and parsed data
-                response['parsed_data'] = parsed_data
-                return response
-            else:
-                self.logger.error("✗ Failed to parse real-time data payload")
-                return response  # Return raw response even if parsing fails
-        else:
-            self.logger.error("✗ Failed to read real-time information")
-            return None
+        return self._send_simple_command(0x0B, "read real-time information")
 
     def clear_faults(self):
         """
@@ -413,15 +475,7 @@ class SteadyWinRS485:
             dict: Response data from motor, or None on error
         """
         self.logger.info("Clearing motor faults")
-        
-        response = self.send_command(0x0F, b'', expect_response=True)
-        
-        if response:
-            self.logger.info("✓ Clear faults command executed successfully")
-            return response
-        else:
-            self.logger.error("✗ Failed to clear faults")
-            return None
+        return self._send_simple_command(0x0F, "clear faults")
 
     def _parse_user_parameters(self, payload):
         """
@@ -595,25 +649,7 @@ class SteadyWinRS485:
         Returns:
             dict: Response data containing user parameters, or None on error
         """
-        self.logger.info("Reading user parameters")
-        
-        response = self.send_command(0x10, b'', expect_response=True)
-        
-        if response:
-            self.logger.info("✓ User parameters read successfully")
-            
-            # Parse the payload data
-            parsed_data = self._parse_user_parameters(response['payload'])
-            if parsed_data:
-                # Return both raw response and parsed data
-                response['parsed_data'] = parsed_data
-                return response
-            else:
-                self.logger.error("✗ Failed to parse user parameters payload")
-                return response  # Return raw response even if parsing fails
-        else:
-            self.logger.error("✗ Failed to read user parameters")
-            return None
+        return self._send_parameter_read_command(0x10, "read user parameters", self._parse_user_parameters)
 
     def write_user_parameters(self, parameters_dict=None, raw_payload=None):
         """
@@ -645,18 +681,7 @@ class SteadyWinRS485:
                 return None
         
         self.logger.info("Writing user parameters")
-        
-        response = self.send_command(0x11, payload, expect_response=True)
-        
-        if response:
-            self.logger.info("✓ User parameters written successfully")
-            # Parse the response like read_user_parameters does
-            parsed_data = self._parse_user_parameters(response['payload'])
-            response['parsed_data'] = parsed_data
-            return response
-        else:
-            self.logger.error("✗ Failed to write user parameters")
-            return None
+        return self._send_parameter_write_command(0x11, payload, "write user parameters", self._parse_user_parameters)
 
     def _build_user_parameters_payload(self, params):
         """
@@ -1115,20 +1140,7 @@ class SteadyWinRS485:
         Returns:
             dict: Response data containing control parameters, or None on error
         """
-        self.logger.info("Reading control parameters (PID and output limits)")
-        response = self.send_command(0x14, b'', expect_response=True)
-        if response:
-            self.logger.info("✓ Control parameters read successfully")
-            parsed_data = self._parse_control_parameters(response['payload'])
-            if parsed_data:
-                response['parsed_data'] = parsed_data
-                return response
-            else:
-                self.logger.error("✗ Failed to parse control parameters payload")
-                return response
-        else:
-            self.logger.error("✗ Failed to read control parameters")
-            return None
+        return self._send_parameter_read_command(0x14, "read control parameters", self._parse_control_parameters)
 
     def _build_control_parameters_payload(self, params):
         """
@@ -1180,15 +1192,7 @@ class SteadyWinRS485:
             if payload is None:
                 return None
         self.logger.info("Writing control parameters (PID and output limits)")
-        response = self.send_command(0x15, payload, expect_response=True)
-        if response:
-            self.logger.info("✓ Control parameters written successfully")
-            parsed_data = self._parse_control_parameters(response['payload'])
-            response['parsed_data'] = parsed_data
-            return response
-        else:
-            self.logger.error("✗ Failed to write control parameters")
-            return None
+        return self._send_parameter_write_command(0x15, payload, "write control parameters", self._parse_control_parameters)
 
     def write_control_parameters_and_save(self, parameters_dict=None, raw_payload=None):
         """
@@ -1219,17 +1223,7 @@ class SteadyWinRS485:
                 return None
         
         self.logger.info("Writing and saving control parameters (PID and output limits)")
-        
-        response = self.send_command(0x16, payload, expect_response=True)
-        
-        if response:
-            self.logger.info("✓ Control parameters written and saved successfully")
-            parsed_data = self._parse_control_parameters(response['payload'])
-            response['parsed_data'] = parsed_data
-            return response
-        else:
-            self.logger.error("✗ Failed to write and save control parameters")
-            return None
+        return self._send_parameter_write_command(0x16, payload, "write and save control parameters", self._parse_control_parameters)
 
     def set_zero_position(self):
         """
@@ -1242,15 +1236,7 @@ class SteadyWinRS485:
             dict: Response data from motor, or None on error
         """
         self.logger.info("Setting current position as zero/origin")
-        
-        response = self.send_command(0x1D, b'', expect_response=True)
-        
-        if response:
-            self.logger.info("✓ Zero position set successfully")
-            return response
-        else:
-            self.logger.error("✗ Failed to set zero position")
-            return None
+        return self._send_simple_command(0x1D, "set zero position")
 
     def calibrate_encoder(self, timeout_seconds=90, poll_interval=1.0, monitor_progress=True):
         """
@@ -1367,16 +1353,10 @@ class SteadyWinRS485:
             dict: Response data from motor, or None on error
         """
         self.logger.info("Performing factory reset - restoring parameters to default values")
-        
-        response = self.send_command(0x1F, b'', expect_response=True)
-        
-        if response:
-            self.logger.info("✓ Factory reset completed successfully")
+        result = self._send_simple_command(0x1F, "factory reset")
+        if result:
             self.logger.warning("⚠ All parameters have been reset to factory defaults")
-            return response
-        else:
-            self.logger.error("✗ Failed to perform factory reset")
-            return None
+        return result
 
     def q_axis_current_control(self, target_current_ma, current_slope_ma_per_s=0):
         """
@@ -1425,24 +1405,7 @@ class SteadyWinRS485:
             return None
         
         self.logger.info(f"Setting Q-axis current: {target_current_ma}mA, slope: {current_slope_ma_per_s}mA/s")
-        
-        response = self.send_command(0x20, bytes(payload), expect_response=True)
-        
-        if response:
-            self.logger.info("✓ Q-axis current control command executed successfully")
-            
-            # Parse the response using the same logic as read_realtime_info
-            parsed_data = self._parse_realtime_data(response['payload'])
-            if parsed_data:
-                # Return both raw response and parsed data
-                response['parsed_data'] = parsed_data
-                return response
-            else:
-                self.logger.error("✗ Failed to parse Q-axis current control response")
-                return response  # Return raw response even if parsing fails
-        else:
-            self.logger.error("✗ Failed to execute Q-axis current control command")
-            return None
+        return self._send_control_command(0x20, bytes(payload), "Q-axis current control")
 
     def velocity_control(self, target_speed_rpm, acceleration_rpm_per_s=0):
         """
@@ -1490,24 +1453,7 @@ class SteadyWinRS485:
             return None
         
         self.logger.info(f"Setting target speed: {target_speed_rpm:.2f} RPM, acceleration: {acceleration_rpm_per_s:.2f} RPM/s")
-        
-        response = self.send_command(0x21, bytes(payload), expect_response=True)
-        
-        if response:
-            self.logger.info("✓ Velocity control command executed successfully")
-            
-            # Parse the response using the same logic as read_realtime_info
-            parsed_data = self._parse_realtime_data(response['payload'])
-            if parsed_data:
-                # Return both raw response and parsed data
-                response['parsed_data'] = parsed_data
-                return response
-            else:
-                self.logger.error("✗ Failed to parse velocity control response")
-                return response  # Return raw response even if parsing fails
-        else:
-            self.logger.error("✗ Failed to execute velocity control command")
-            return None
+        return self._send_control_command(0x21, bytes(payload), "velocity control")
 
     def absolute_position_control(self, target_position_counts):
         """
@@ -1545,24 +1491,7 @@ class SteadyWinRS485:
         target_degrees = target_position_counts * 360.0 / 16384
         
         self.logger.info(f"Setting absolute position: {target_position_counts} counts ({target_degrees:.2f}°)")
-        
-        response = self.send_command(0x22, bytes(payload), expect_response=True)
-        
-        if response:
-            self.logger.info("✓ Absolute position control command executed successfully")
-            
-            # Parse the response using the same logic as read_realtime_info
-            parsed_data = self._parse_realtime_data(response['payload'])
-            if parsed_data:
-                # Return both raw response and parsed data
-                response['parsed_data'] = parsed_data
-                return response
-            else:
-                self.logger.error("✗ Failed to parse absolute position control response")
-                return response  # Return raw response even if parsing fails
-        else:
-            self.logger.error("✗ Failed to execute absolute position control command")
-            return None
+        return self._send_control_command(0x22, bytes(payload), "absolute position control")
 
     def relative_position_control(self, relative_position_counts):
         """
@@ -1600,24 +1529,7 @@ class SteadyWinRS485:
         relative_degrees = relative_position_counts * 360.0 / 16384
         
         self.logger.info(f"Moving relative position: {relative_position_counts} counts ({relative_degrees:.2f}°)")
-        
-        response = self.send_command(0x23, bytes(payload), expect_response=True)
-        
-        if response:
-            self.logger.info("✓ Relative position control command executed successfully")
-            
-            # Parse the response using the same logic as read_realtime_info
-            parsed_data = self._parse_realtime_data(response['payload'])
-            if parsed_data:
-                # Return both raw response and parsed data
-                response['parsed_data'] = parsed_data
-                return response
-            else:
-                self.logger.error("✗ Failed to parse relative position control response")
-                return response  # Return raw response even if parsing fails
-        else:
-            self.logger.error("✗ Failed to execute relative position control command")
-            return None
+        return self._send_control_command(0x23, bytes(payload), "relative position control")
 
     def return_home(self):
         """
@@ -1631,24 +1543,7 @@ class SteadyWinRS485:
             dict: Response data containing real-time info, or None on error
         """
         self.logger.info("Returning motor to home position")
-        
-        response = self.send_command(0x24, b'', expect_response=True)
-        
-        if response:
-            self.logger.info("✓ Return home command executed successfully")
-            
-            # Parse the response using the same logic as read_realtime_info
-            parsed_data = self._parse_realtime_data(response['payload'])
-            if parsed_data:
-                # Return both raw response and parsed data
-                response['parsed_data'] = parsed_data
-                return response
-            else:
-                self.logger.error("✗ Failed to parse return home response")
-                return response  # Return raw response even if parsing fails
-        else:
-            self.logger.error("✗ Failed to execute return home command")
-            return None
+        return self._send_simple_command(0x24, "return home")
 
     def brake_control(self, operation):
         """
@@ -1732,24 +1627,7 @@ class SteadyWinRS485:
             dict: Response data containing real-time info, or None on error
         """
         self.logger.info("Disabling motor")
-        
-        response = self.send_command(0x2F, b'', expect_response=True)
-        
-        if response:
-            self.logger.info("✓ Motor disable command executed successfully")
-            
-            # Parse the response using the same logic as read_realtime_info
-            parsed_data = self._parse_realtime_data(response['payload'])
-            if parsed_data:
-                # Return both raw response and parsed data
-                response['parsed_data'] = parsed_data
-                return response
-            else:
-                self.logger.error("✗ Failed to parse motor disable response")
-                return response  # Return raw response even if parsing fails
-        else:
-            self.logger.error("✗ Failed to execute motor disable command")
-            return None
+        return self._send_simple_command(0x2F, "motor disable")
 
     @staticmethod
     def counts_to_degrees(counts):
